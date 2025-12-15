@@ -1,21 +1,32 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { AgentMemory, InputMode } from '../types';
 import { generateCardText, generateHolidayVibeImage, HolidayLiveAgent } from '../services/geminiService';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 
 interface Props {
     memory: AgentMemory;
     updateMemory: (m: Partial<AgentMemory>) => void;
 }
 
+type GiftType = 'URL' | 'CODE';
+type GiftProvider = 'APPLE' | 'GOOGLE' | 'AMAZON';
+
 const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
     // UI State
     const [activePage, setActivePage] = useState(0);
     const [mode, setMode] = useState<InputMode>(InputMode.TEXT);
     const [loading, setLoading] = useState(false);
+    const [generatingPdf, setGeneratingPdf] = useState(false);
+    
+    // Gift State
+    const [giftType, setGiftType] = useState<GiftType>('URL');
+    const [giftProvider, setGiftProvider] = useState<GiftProvider>('APPLE');
+    const [showGiftCode, setShowGiftCode] = useState(false);
     
     // Data State
     const [recipient, setRecipient] = useState(memory.recipientName || 'Family');
-    const [giftUrl, setGiftUrl] = useState(memory.giftUrl || '');
+    const [giftValue, setGiftValue] = useState(memory.giftUrl || '');
     const [textInput, setTextInput] = useState("A cozy cabin in the snow with neon lights. Warm and nostalgic.");
     
     // Live Agent State
@@ -24,6 +35,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
     const [currentTurn, setCurrentTurn] = useState<{user: string, elf: string}>({ user: '', elf: '' });
     const agentRef = useRef<HolidayLiveAgent | null>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
+    const pdfContainerRef = useRef<HTMLDivElement>(null);
 
     // Cleanup agent on unmount
     useEffect(() => {
@@ -88,12 +100,11 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
             updates.cardMessage = textData.text;
             
             // 2. Generate Image
-            // We use the same context to ensure the image matches the conversation/text vibe
             const imageUrl = await generateHolidayVibeImage(context);
             updates.generatedCardUrl = imageUrl;
 
             updates.recipientName = recipient;
-            updates.giftUrl = giftUrl;
+            updates.giftUrl = giftValue;
             
             updateMemory(updates);
             setActivePage(1); // Auto flip to inside
@@ -106,10 +117,63 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
         }
     };
 
-    const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(giftUrl || 'https://google.com')}&color=255-255-255&bgcolor=000-000-000`;
+    const downloadPDF = async () => {
+        if (!pdfContainerRef.current) return;
+        setGeneratingPdf(true);
+        try {
+            const doc = new jsPDF({
+                orientation: 'portrait',
+                unit: 'px',
+                format: [400, 560]
+            });
 
-    const renderPageContent = () => {
-        switch(activePage) {
+            const pages = pdfContainerRef.current.children;
+            for (let i = 0; i < pages.length; i++) {
+                const pageElement = pages[i] as HTMLElement;
+                const canvas = await html2canvas(pageElement, {
+                    scale: 2,
+                    useCORS: true,
+                    backgroundColor: null
+                });
+                
+                const imgData = canvas.toDataURL('image/jpeg', 0.95);
+                
+                if (i > 0) doc.addPage();
+                doc.addImage(imgData, 'JPEG', 0, 0, 400, 560);
+            }
+
+            doc.save(`holiday-card-${recipient}.pdf`);
+        } catch (e) {
+            console.error("PDF Generation failed:", e);
+            alert("Could not generate PDF. Please try again.");
+        } finally {
+            setGeneratingPdf(false);
+        }
+    };
+
+    // Smart QR Logic
+    const getQrData = () => {
+        if (!giftValue) return 'https://google.com';
+        
+        if (giftType === 'URL') return giftValue;
+        
+        // Handle Redeem Codes
+        switch (giftProvider) {
+            case 'APPLE':
+                return `https://apps.apple.com/redeem?code=${giftValue}`;
+            case 'GOOGLE':
+                return `https://play.google.com/redeem?code=${giftValue}`;
+            case 'AMAZON':
+                return `https://www.amazon.com/gc/redeem?claimCode=${giftValue}`;
+            default:
+                return giftValue;
+        }
+    };
+
+    const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(getQrData())}&color=255-255-255&bgcolor=000-000-000`;
+
+    const renderPageContent = (pageIndex: number) => {
+        switch(pageIndex) {
             case 0: // Cover
                 return (
                     <div className="relative w-full h-full bg-slate-800 flex items-center justify-center overflow-hidden">
@@ -151,9 +215,11 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                             <span className="material-symbols-outlined text-6xl text-red-500 mb-4">redeem</span>
                             <h3 className="font-christmas text-3xl text-red-700 mb-6">A Little Something</h3>
                             <div className="bg-white p-4 rounded-xl shadow-inner border border-slate-200 inline-block">
-                                {giftUrl ? <img src={qrCodeUrl} alt="Gift QR" className="w-32 h-32" /> : <div className="w-32 h-32 bg-slate-100 flex items-center justify-center text-slate-400 text-xs">No Gift URL</div>}
+                                {giftValue ? <img src={qrCodeUrl} alt="Gift QR" className="w-32 h-32" /> : <div className="w-32 h-32 bg-slate-100 flex items-center justify-center text-slate-400 text-xs">No Gift Added</div>}
                             </div>
-                            <p className="mt-6 text-sm font-serif text-slate-600 italic max-w-xs mx-auto">Scan the code to unwrap your digital surprise!</p>
+                            <p className="mt-6 text-sm font-serif text-slate-600 italic max-w-xs mx-auto">
+                                {giftType === 'CODE' && giftProvider === 'APPLE' ? 'Scan to redeem on App Store' : 'Scan to unwrap your surprise!'}
+                            </p>
                         </div>
                     </div>
                 );
@@ -185,9 +251,46 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                         <input value={recipient} onChange={e => setRecipient(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white focus:border-red-500 outline-none" />
                     </div>
                     
-                    <div className="mb-4">
-                         <label className="block text-slate-400 text-xs uppercase font-bold mb-1">Gift URL (Optional)</label>
-                         <input value={giftUrl} onChange={e => setGiftUrl(e.target.value)} placeholder="https://..." className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white focus:border-red-500 outline-none" />
+                    <div className="mb-2">
+                         <div className="flex gap-2 mb-2">
+                             <button onClick={() => setGiftType('URL')} className={`text-xs px-2 py-1 rounded ${giftType === 'URL' ? 'bg-red-500 text-white' : 'bg-slate-700 text-slate-400'}`}>Web Link</button>
+                             <button onClick={() => setGiftType('CODE')} className={`text-xs px-2 py-1 rounded ${giftType === 'CODE' ? 'bg-red-500 text-white' : 'bg-slate-700 text-slate-400'}`}>Redeem Code</button>
+                         </div>
+                         
+                         {giftType === 'CODE' && (
+                             <div className="flex gap-1 mb-2">
+                                 {(['APPLE', 'GOOGLE', 'AMAZON'] as GiftProvider[]).map(p => (
+                                     <button key={p} onClick={() => setGiftProvider(p)} className={`text-[10px] px-2 py-1 rounded border ${giftProvider === p ? 'border-amber-500 text-amber-500' : 'border-slate-700 text-slate-500'}`}>
+                                         {p}
+                                     </button>
+                                 ))}
+                             </div>
+                         )}
+
+                         <label className="block text-slate-400 text-xs uppercase font-bold mb-1">
+                             {giftType === 'URL' ? 'Gift URL' : `${giftProvider} Code`}
+                         </label>
+                         <div className="relative">
+                             <input 
+                                value={giftValue} 
+                                onChange={e => setGiftValue(e.target.value)} 
+                                type={showGiftCode ? "text" : "password"}
+                                placeholder={giftType === 'URL' ? "https://..." : "ABCD-1234-..."} 
+                                className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white focus:border-red-500 outline-none pr-8" 
+                             />
+                             <button 
+                                onClick={() => setShowGiftCode(!showGiftCode)}
+                                className="absolute right-2 top-2 text-slate-500 hover:text-white"
+                             >
+                                 <span className="material-symbols-outlined text-sm">{showGiftCode ? 'visibility_off' : 'visibility'}</span>
+                             </button>
+                         </div>
+                         {giftType === 'CODE' && giftProvider === 'APPLE' && giftValue && (
+                             <p className="text-[10px] text-green-400 mt-1 flex items-center gap-1">
+                                 <span className="material-symbols-outlined text-[10px]">lock</span>
+                                 Encoded as secure redeem link
+                             </p>
+                         )}
                     </div>
                 </div>
 
@@ -254,12 +357,12 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                 <div className="relative w-[400px] h-[560px] shadow-2xl transition-all duration-500 transform perspective-1000">
                     <div className="w-full h-full bg-white rounded-r-lg rounded-l-sm overflow-hidden relative shadow-lg">
                         <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-black/20 to-transparent z-20 pointer-events-none"></div>
-                        {renderPageContent()}
+                        {renderPageContent(activePage)}
                     </div>
                 </div>
 
                 {/* Pagination */}
-                <div className="mt-8 flex gap-4 bg-slate-900/80 p-2 rounded-full border border-white/10 backdrop-blur">
+                <div className="mt-8 flex gap-4 bg-slate-900/80 p-2 rounded-full border border-white/10 backdrop-blur items-center">
                     <button onClick={() => setActivePage(Math.max(0, activePage - 1))} className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-white/10 transition-colors">
                         <span className="material-symbols-outlined">chevron_left</span>
                     </button>
@@ -272,7 +375,31 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                         <span className="material-symbols-outlined">chevron_right</span>
                     </button>
                 </div>
-                <p className="text-xs text-slate-500 mt-2 uppercase tracking-widest">{['Cover Page', 'Letter', 'Gift', 'Back'][activePage]}</p>
+                
+                <div className="flex justify-between w-full max-w-[400px] mt-4 items-center">
+                    <p className="text-xs text-slate-500 uppercase tracking-widest">{['Cover Page', 'Letter', 'Gift', 'Back'][activePage]}</p>
+                    {memory.generatedCardUrl && (
+                        <button 
+                            onClick={downloadPDF}
+                            disabled={generatingPdf}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${generatingPdf ? 'bg-slate-700 text-slate-500' : 'bg-green-600 hover:bg-green-500 text-white shadow-lg'}`}
+                        >
+                            <span className="material-symbols-outlined">{generatingPdf ? 'hourglass_empty' : 'download'}</span>
+                            {generatingPdf ? 'PDF...' : 'Download PDF'}
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            {/* Hidden Container for PDF Rendering */}
+            <div style={{ position: 'absolute', top: '-9999px', left: '-9999px', pointerEvents: 'none' }}>
+                <div ref={pdfContainerRef}>
+                    {[0, 1, 2, 3].map(i => (
+                        <div key={i} style={{ width: '400px', height: '560px', overflow: 'hidden', background: 'white' }}>
+                            {renderPageContent(i)}
+                        </div>
+                    ))}
+                </div>
             </div>
         </div>
     );
