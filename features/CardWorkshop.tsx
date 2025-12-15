@@ -90,7 +90,16 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
             } else {
                 // Combine history for context
                 context = history.map(h => `${h.role}: ${h.text}`).join('\n');
-                if (context.length < 10) context = "A standard festive holiday card."; // Fallback
+                if (context.length < 10 && history.length === 0) {
+                     // If purely empty voice session, alert user or use fallback
+                     // If we are here, it means we probably clicked 'Generate' without chatting
+                     if (mode === InputMode.VOICE && !connected && history.length === 0) {
+                        alert("Please brainstorm with the elf first or switch to Text Draft.");
+                        setLoading(false);
+                        return;
+                     }
+                     context = "A standard festive holiday card."; 
+                }
             }
 
             const updates: Partial<AgentMemory> = { conversationContext: context };
@@ -114,6 +123,30 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
             alert("Card generation failed. Please try again.");
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleMainAction = async () => {
+        if (mode === InputMode.VOICE) {
+            if (connected) {
+                // Finish & Generate Flow
+                if (agentRef.current) await agentRef.current.disconnect();
+                setConnected(false);
+                agentRef.current = null;
+                await generateAssets();
+            } else {
+                // Not Connected
+                if (history.length === 0) {
+                    // Start Brainstorming
+                    await toggleConnection();
+                } else {
+                    // Has history, generate
+                    await generateAssets();
+                }
+            }
+        } else {
+            // Text Mode
+            await generateAssets();
         }
     };
 
@@ -239,6 +272,22 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
         }
     };
 
+    // Helper to get button text
+    const getActionButtonText = () => {
+        if (loading) return "Creating Magic...";
+        if (mode === InputMode.TEXT) return "Generate Card";
+        if (connected) return "Finish & Create Card";
+        if (history.length > 0) return "Create Card from Chat";
+        return "Start Brainstorming";
+    };
+
+    const getActionButtonIcon = () => {
+        if (loading) return "refresh";
+        if (mode === InputMode.VOICE && connected) return "check_circle";
+        if (mode === InputMode.VOICE && history.length === 0) return "mic";
+        return "auto_fix_high";
+    };
+
     return (
         <div className="bg-slate-800/30 backdrop-blur-md border border-white/10 rounded-2xl p-6 shadow-2xl min-h-[600px] flex flex-col md:flex-row gap-8">
             {/* Left Panel: Inputs & Chat */}
@@ -328,26 +377,30 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                                 {currentTurn.elf && <p className="text-green-300 opacity-60"><span className="font-bold text-xs opacity-50 block uppercase">ELF</span>{currentTurn.elf}</p>}
                             </div>
                             
-                            <button 
-                                onClick={toggleConnection}
-                                className={`w-full py-3 rounded-lg font-bold flex items-center justify-center gap-2 transition-all ${connected ? 'bg-red-500/20 text-red-300 border border-red-500/50 hover:bg-red-500/30' : 'bg-green-600 hover:bg-green-500 text-white shadow-lg'}`}
-                            >
-                                <span className="material-symbols-outlined">{connected ? 'mic_off' : 'mic'}</span>
-                                {connected ? 'End Chat' : 'Start Brainstorming'}
-                            </button>
                             {connected && (
                                 <div className="absolute top-2 right-2 w-3 h-3 bg-red-500 rounded-full animate-pulse shadow-[0_0_10px_red]"></div>
+                            )}
+
+                            {/* Resume Option: Only show if disconnected and has history */}
+                            {!connected && history.length > 0 && (
+                                <div className="text-center mb-2">
+                                     <button onClick={toggleConnection} className="text-xs text-slate-400 hover:text-white underline">
+                                         Resume Chat
+                                     </button>
+                                </div>
                             )}
                         </div>
                     )}
 
                     <button 
-                        onClick={generateAssets}
+                        onClick={handleMainAction}
                         disabled={loading}
                         className={`w-full mt-4 py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all ${loading ? 'bg-slate-700 cursor-wait' : 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-black shadow-lg shadow-amber-900/30'}`}
                     >
-                        {loading ? <span className="material-symbols-outlined animate-spin">refresh</span> : <span className="material-symbols-outlined">auto_fix_high</span>}
-                        {loading ? 'Creating Magic...' : 'Generate Card'}
+                        <span className={`material-symbols-outlined ${loading ? 'animate-spin' : ''}`}>
+                            {getActionButtonIcon()}
+                        </span>
+                        {getActionButtonText()}
                     </button>
                 </div>
             </div>
