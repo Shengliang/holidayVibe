@@ -41,10 +41,12 @@ export const generateHolidayBackground = async (context: string) => {
   const ai = getAI();
   const model = "gemini-2.5-flash-image";
   
-  const prompt = `A subtle, high-quality holiday paper texture or background pattern. 
-  Theme: ${context}. 
-  Style: Elegant, light opacity, suitable for writing text over it. 
-  No text, no central subject, just atmospheric texture.`;
+  const prompt = `Design a stationery background pattern for a holiday card.
+  Context/Theme: "${context}".
+  Requirement: This background must match the visual theme of the cover art described by the context.
+  Style: Subtle, watermark-style, light opacity, high resolution paper texture. Suitable for overlaying text.
+  Elements: Very faint motifs related to the theme around the borders.
+  NO TEXT.`;
 
   const response = await ai.models.generateContent({
     model,

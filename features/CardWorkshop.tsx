@@ -124,11 +124,11 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                 }
             };
 
-            // Handle Voice-Triggered Generation
+            // Handle Voice-Triggered Generation (Optional fallback, but button is primary)
             agentRef.current.onGenerateTrigger = () => {
                 console.log("Trigger received from Agent Tool Call");
-                handleDisconnect(); // Stop call
-                generateAssets(); // Start generation
+                handleDisconnect(); 
+                generateAssets(); 
             };
 
             try {
@@ -201,6 +201,21 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
             setLoading(false);
             setGenerationStatus("");
         }
+    };
+
+    const handleMainAction = async () => {
+        if (connected) {
+            await handleDisconnect();
+        }
+        await generateAssets();
+    };
+
+    // Helper to get button text
+    const getActionButtonText = () => {
+        if (loading) return "Creating Magic...";
+        if (connected) return "Finish & Create Card";
+        if (history.length > 0 || textInput.trim()) return "Create Card from Chat";
+        return "Create Card";
     };
 
     const downloadPDF = async () => {
@@ -390,7 +405,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                             {history.length === 0 && !currentTurn.user && !textInput && <p className="text-slate-600 italic text-center mt-8 text-xs">
                                 1. Type ideas (optional)<br/>
                                 2. Tap Mic to chat<br/>
-                                3. Say "Generate Card" to finish
+                                3. Click Create Card when ready
                             </p>}
                             {history.map((h, i) => (
                                 <p key={i} className={h.role === 'user' ? 'text-slate-300' : 'text-green-300'}>
@@ -432,23 +447,16 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                         </div>
                     </div>
 
-                    {/* Status / Manual Trigger */}
-                    <div className="mt-4 text-center">
-                        {loading ? (
-                             <div className="flex items-center justify-center gap-2 text-amber-400 animate-pulse">
-                                 <span className="material-symbols-outlined animate-spin">auto_mode</span>
-                                 <span className="text-sm font-bold">{generationStatus || "Generating..."}</span>
-                             </div>
-                        ) : (
-                            <button 
-                                onClick={generateAssets} 
-                                className="text-xs text-slate-500 hover:text-slate-300 underline"
-                                title="Use this if voice trigger fails"
-                            >
-                                Manual Generate (Fallback)
-                            </button>
-                        )}
-                    </div>
+                    <button 
+                        onClick={handleMainAction}
+                        disabled={loading}
+                        className={`w-full mt-4 py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all ${loading ? 'bg-slate-700 cursor-wait' : 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-black shadow-lg shadow-amber-900/30'}`}
+                    >
+                        <span className={`material-symbols-outlined ${loading ? 'animate-spin' : ''}`}>
+                            {loading ? 'refresh' : (connected ? 'check_circle' : 'auto_fix_high')}
+                        </span>
+                        {getActionButtonText()}
+                    </button>
                 </div>
             </div>
 
