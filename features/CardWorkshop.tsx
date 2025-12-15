@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { AgentMemory, InputMode } from '../types';
+import { AgentMemory } from '../types';
 import { generateCardText, generateHolidayVibeImage, HolidayLiveAgent } from '../services/geminiService';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -15,7 +15,6 @@ type GiftProvider = 'APPLE' | 'GOOGLE' | 'AMAZON';
 const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
     // UI State
     const [activePage, setActivePage] = useState(0);
-    const [mode, setMode] = useState<InputMode>(InputMode.TEXT);
     const [loading, setLoading] = useState(false);
     const [generatingPdf, setGeneratingPdf] = useState(false);
     
@@ -27,7 +26,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
     // Data State
     const [recipient, setRecipient] = useState(memory.recipientName || 'Family');
     const [giftValue, setGiftValue] = useState(memory.giftUrl || '');
-    const [textInput, setTextInput] = useState("A cozy cabin in the snow with neon lights. Warm and nostalgic.");
+    const [textInput, setTextInput] = useState("");
     
     // Live Agent State
     const [connected, setConnected] = useState(false);
@@ -49,7 +48,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
         if (scrollRef.current) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
         }
-    }, [history, currentTurn, mode]);
+    }, [history, currentTurn]);
 
     const toggleConnection = async () => {
         if (connected) {
@@ -80,26 +79,33 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
         }
     };
 
+    const handleSendMessage = () => {
+        if (!textInput.trim()) return;
+        setHistory(prev => [...prev, { role: 'user', text: textInput.trim() }]);
+        setTextInput("");
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            handleSendMessage();
+        }
+    };
+
     const generateAssets = async () => {
         setLoading(true);
         try {
-            // Determine Context Source
-            let context = "";
-            if (mode === InputMode.TEXT) {
-                context = textInput;
-            } else {
-                // Combine history for context
-                context = history.map(h => `${h.role}: ${h.text}`).join('\n');
-                if (context.length < 10 && history.length === 0) {
-                     // If purely empty voice session, alert user or use fallback
-                     // If we are here, it means we probably clicked 'Generate' without chatting
-                     if (mode === InputMode.VOICE && !connected && history.length === 0) {
-                        alert("Please brainstorm with the elf first or switch to Text Draft.");
-                        setLoading(false);
-                        return;
-                     }
-                     context = "A standard festive holiday card."; 
-                }
+            // Combine history for context
+            let context = history.map(h => `${h.role}: ${h.text}`).join('\n');
+            
+            // Include current text input if user hasn't sent it yet
+            if (textInput.trim()) {
+                context += `\nuser: ${textInput.trim()}`;
+            }
+
+            // Fallback if empty
+            if (!context.trim()) {
+                 context = "A standard festive holiday card."; 
             }
 
             const updates: Partial<AgentMemory> = { conversationContext: context };
@@ -127,27 +133,13 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
     };
 
     const handleMainAction = async () => {
-        if (mode === InputMode.VOICE) {
-            if (connected) {
-                // Finish & Generate Flow
-                if (agentRef.current) await agentRef.current.disconnect();
-                setConnected(false);
-                agentRef.current = null;
-                await generateAssets();
-            } else {
-                // Not Connected
-                if (history.length === 0) {
-                    // Start Brainstorming
-                    await toggleConnection();
-                } else {
-                    // Has history, generate
-                    await generateAssets();
-                }
-            }
-        } else {
-            // Text Mode
-            await generateAssets();
+        if (connected) {
+            // Finish & Generate Flow
+            if (agentRef.current) await agentRef.current.disconnect();
+            setConnected(false);
+            agentRef.current = null;
         }
+        await generateAssets();
     };
 
     const downloadPDF = async () => {
@@ -275,17 +267,9 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
     // Helper to get button text
     const getActionButtonText = () => {
         if (loading) return "Creating Magic...";
-        if (mode === InputMode.TEXT) return "Generate Card";
         if (connected) return "Finish & Create Card";
-        if (history.length > 0) return "Create Card from Chat";
-        return "Start Brainstorming";
-    };
-
-    const getActionButtonIcon = () => {
-        if (loading) return "refresh";
-        if (mode === InputMode.VOICE && connected) return "check_circle";
-        if (mode === InputMode.VOICE && history.length === 0) return "mic";
-        return "auto_fix_high";
+        if (history.length > 0 || textInput.trim()) return "Create Card from Chat";
+        return "Create Card";
     };
 
     return (
@@ -344,53 +328,54 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                 </div>
 
                 <div className="flex-1 bg-slate-900/50 p-4 rounded-xl border border-white/5 flex flex-col">
-                    <div className="flex gap-2 mb-4 bg-slate-800 p-1 rounded-lg">
-                        <button onClick={() => setMode(InputMode.TEXT)} className={`flex-1 py-2 rounded text-sm font-bold transition-all ${mode === InputMode.TEXT ? 'bg-slate-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
-                            Text Draft
-                        </button>
-                        <button onClick={() => setMode(InputMode.VOICE)} className={`flex-1 py-2 rounded text-sm font-bold transition-all ${mode === InputMode.VOICE ? 'bg-red-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
-                            Live Elf Chat
-                        </button>
+                    <div className="flex items-center justify-between mb-2">
+                        <h3 className="font-christmas text-xl text-red-300">Live Elf Chat</h3>
+                        {connected && <span className="flex h-2 w-2 relative"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span><span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span></span>}
                     </div>
 
-                    {mode === InputMode.TEXT ? (
-                        <div className="flex-1 flex flex-col">
-                            <label className="block text-slate-400 text-xs uppercase font-bold mb-2">Describe your Vibe & Message</label>
-                            <textarea 
-                                value={textInput} 
-                                onChange={e => setTextInput(e.target.value)}
-                                className="flex-1 w-full bg-slate-800 border border-slate-600 rounded p-3 text-white focus:border-red-500 outline-none resize-none"
-                                placeholder="E.g. I want a funny card for my brother involving a reindeer..."
-                            />
+                    <div className="flex-1 flex flex-col relative">
+                        {/* Chat History */}
+                        <div className="flex-1 bg-black/20 rounded-lg p-3 overflow-y-auto mb-2 text-sm space-y-2 h-40 border border-white/5 scroll-smooth" ref={scrollRef}>
+                            {history.length === 0 && !currentTurn.user && !textInput && <p className="text-slate-600 italic text-center mt-8">Type a message or use voice to brainstorm...</p>}
+                            {history.map((h, i) => (
+                                <p key={i} className={h.role === 'user' ? 'text-slate-300' : 'text-green-300'}>
+                                    <span className="font-bold text-xs opacity-50 block uppercase">{h.role}</span>
+                                    {h.text}
+                                </p>
+                            ))}
+                            {currentTurn.user && <p className="text-slate-300 opacity-60"><span className="font-bold text-xs opacity-50 block uppercase">USER</span>{currentTurn.user}</p>}
+                            {currentTurn.elf && <p className="text-green-300 opacity-60"><span className="font-bold text-xs opacity-50 block uppercase">ELF</span>{currentTurn.elf}</p>}
                         </div>
-                    ) : (
-                        <div className="flex-1 flex flex-col relative">
-                            <div className="flex-1 bg-black/20 rounded-lg p-3 overflow-y-auto mb-4 text-sm space-y-2 h-48 border border-white/5 scroll-smooth" ref={scrollRef}>
-                                {history.length === 0 && !currentTurn.user && <p className="text-slate-600 italic text-center mt-8">Connect to brainstorm with the elf...</p>}
-                                {history.map((h, i) => (
-                                    <p key={i} className={h.role === 'user' ? 'text-slate-300' : 'text-green-300'}>
-                                        <span className="font-bold text-xs opacity-50 block uppercase">{h.role}</span>
-                                        {h.text}
-                                    </p>
-                                ))}
-                                {currentTurn.user && <p className="text-slate-300 opacity-60"><span className="font-bold text-xs opacity-50 block uppercase">USER</span>{currentTurn.user}</p>}
-                                {currentTurn.elf && <p className="text-green-300 opacity-60"><span className="font-bold text-xs opacity-50 block uppercase">ELF</span>{currentTurn.elf}</p>}
+                        
+                        {/* Hybrid Input Area */}
+                        <div className="flex gap-2">
+                            <div className="flex-1 relative">
+                                <input 
+                                    type="text"
+                                    value={textInput}
+                                    onChange={(e) => setTextInput(e.target.value)}
+                                    onKeyDown={handleKeyDown}
+                                    placeholder="Type your idea..."
+                                    className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:border-red-500 outline-none text-sm pr-8"
+                                />
+                                <button 
+                                    onClick={handleSendMessage}
+                                    disabled={!textInput.trim()}
+                                    className="absolute right-1 top-1 bottom-1 text-slate-400 hover:text-white disabled:opacity-30"
+                                >
+                                    <span className="material-symbols-outlined text-sm">send</span>
+                                </button>
                             </div>
                             
-                            {connected && (
-                                <div className="absolute top-2 right-2 w-3 h-3 bg-red-500 rounded-full animate-pulse shadow-[0_0_10px_red]"></div>
-                            )}
-
-                            {/* Resume Option: Only show if disconnected and has history */}
-                            {!connected && history.length > 0 && (
-                                <div className="text-center mb-2">
-                                     <button onClick={toggleConnection} className="text-xs text-slate-400 hover:text-white underline">
-                                         Resume Chat
-                                     </button>
-                                </div>
-                            )}
+                            <button 
+                                onClick={toggleConnection}
+                                className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all ${connected ? 'bg-red-500 text-white animate-pulse' : 'bg-slate-700 text-slate-300 hover:bg-slate-600 hover:text-white'}`}
+                                title={connected ? "Stop Voice Chat" : "Start Voice Chat"}
+                            >
+                                <span className="material-symbols-outlined">{connected ? 'mic_off' : 'mic'}</span>
+                            </button>
                         </div>
-                    )}
+                    </div>
 
                     <button 
                         onClick={handleMainAction}
@@ -398,7 +383,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                         className={`w-full mt-4 py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all ${loading ? 'bg-slate-700 cursor-wait' : 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-black shadow-lg shadow-amber-900/30'}`}
                     >
                         <span className={`material-symbols-outlined ${loading ? 'animate-spin' : ''}`}>
-                            {getActionButtonIcon()}
+                            {loading ? 'refresh' : (connected ? 'check_circle' : 'auto_fix_high')}
                         </span>
                         {getActionButtonText()}
                     </button>
