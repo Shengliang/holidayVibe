@@ -1,48 +1,106 @@
-import React, { useState } from 'react';
-import { AgentMemory } from '../types';
-import { generateCardText, generateHolidayVibeImage } from '../services/geminiService';
+import React, { useState, useRef, useEffect } from 'react';
+import { AgentMemory, InputMode } from '../types';
+import { generateCardText, generateHolidayVibeImage, HolidayLiveAgent } from '../services/geminiService';
 
 interface Props {
-    onBack: () => void;
     memory: AgentMemory;
     updateMemory: (m: Partial<AgentMemory>) => void;
 }
 
-const CardWorkshop: React.FC<Props> = ({ onBack, memory, updateMemory }) => {
-    const [recipient, setRecipient] = useState(memory.recipientName);
-    const [giftUrl, setGiftUrl] = useState(memory.giftUrl || '');
-    const [loading, setLoading] = useState(false);
+const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
+    // UI State
     const [activePage, setActivePage] = useState(0);
+    const [mode, setMode] = useState<InputMode>(InputMode.TEXT);
+    const [loading, setLoading] = useState(false);
+    
+    // Data State
+    const [recipient, setRecipient] = useState(memory.recipientName || 'Family');
+    const [giftUrl, setGiftUrl] = useState(memory.giftUrl || '');
+    const [textInput, setTextInput] = useState("A cozy cabin in the snow with neon lights. Warm and nostalgic.");
+    
+    // Live Agent State
+    const [connected, setConnected] = useState(false);
+    const [history, setHistory] = useState<{role: 'user' | 'elf', text: string}[]>([]);
+    const [currentTurn, setCurrentTurn] = useState<{user: string, elf: string}>({ user: '', elf: '' });
+    const agentRef = useRef<HolidayLiveAgent | null>(null);
+    const scrollRef = useRef<HTMLDivElement>(null);
+
+    // Cleanup agent on unmount
+    useEffect(() => {
+        return () => {
+            if (agentRef.current) agentRef.current.disconnect();
+        };
+    }, []);
+
+    // Auto-scroll chat
+    useEffect(() => {
+        if (scrollRef.current) {
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+    }, [history, currentTurn, mode]);
+
+    const toggleConnection = async () => {
+        if (connected) {
+            if (agentRef.current) await agentRef.current.disconnect();
+            setConnected(false);
+            agentRef.current = null;
+        } else {
+            agentRef.current = new HolidayLiveAgent();
+            agentRef.current.onTranscriptUpdate = (input, output, turnComplete) => {
+                setCurrentTurn(prev => ({ user: prev.user + input, elf: prev.elf + output }));
+                
+                if (turnComplete) {
+                    setCurrentTurn(prev => {
+                        const newItems: {role: 'user' | 'elf', text: string}[] = [];
+                        if (prev.user.trim()) newItems.push({ role: 'user', text: prev.user.trim() });
+                        if (prev.elf.trim()) newItems.push({ role: 'elf', text: prev.elf.trim() });
+                        setHistory(h => [...h, ...newItems]);
+                        return { user: '', elf: '' };
+                    });
+                }
+            };
+            try {
+                await agentRef.current.connect();
+                setConnected(true);
+            } catch(e) {
+                alert("Connection failed. Check permissions.");
+            }
+        }
+    };
 
     const generateAssets = async () => {
         setLoading(true);
         try {
-            const updates: Partial<AgentMemory> = {};
-            
-            // 1. Generate Text (Search Grounded) if missing
-            if (!memory.cardMessage) {
-                const textData = await generateCardText(memory.vibe, recipient);
-                updates.cardMessage = textData.text;
+            // Determine Context Source
+            let context = "";
+            if (mode === InputMode.TEXT) {
+                context = textInput;
+            } else {
+                // Combine history for context
+                context = history.map(h => `${h.role}: ${h.text}`).join('\n');
+                if (context.length < 10) context = "A standard festive holiday card."; // Fallback
             }
+
+            const updates: Partial<AgentMemory> = { conversationContext: context };
             
-            // 2. Generate Cover Image if missing
-            if (!memory.generatedCardUrl) {
-                const imagePrompt = `A holiday greeting card background, theme: ${memory.vibe}, high quality, festive, no text`;
-                const imageUrl = await generateHolidayVibeImage(imagePrompt);
-                updates.generatedCardUrl = imageUrl;
-            }
+            // 1. Generate Text
+            const textData = await generateCardText(context, recipient);
+            updates.cardMessage = textData.text;
+            
+            // 2. Generate Image
+            // We use the same context to ensure the image matches the conversation/text vibe
+            const imageUrl = await generateHolidayVibeImage(context);
+            updates.generatedCardUrl = imageUrl;
 
             updates.recipientName = recipient;
             updates.giftUrl = giftUrl;
             
             updateMemory(updates);
-            
-            // Move to inside page after generation
-            setActivePage(1);
+            setActivePage(1); // Auto flip to inside
 
         } catch (e) {
             console.error(e);
-            alert("Card generation had a hiccup. Try again!");
+            alert("Card generation failed. Please try again.");
         } finally {
             setLoading(false);
         }
@@ -71,7 +129,7 @@ const CardWorkshop: React.FC<Props> = ({ onBack, memory, updateMemory }) => {
                         )}
                     </div>
                 );
-            case 1: // Inside Left (Letter)
+            case 1: // Inside Left
                 return (
                     <div className="w-full h-full bg-[#fffbf0] text-slate-800 p-8 flex flex-col relative">
                         <div className="flex-1 overflow-y-auto">
@@ -86,26 +144,16 @@ const CardWorkshop: React.FC<Props> = ({ onBack, memory, updateMemory }) => {
                         </div>
                     </div>
                 );
-            case 2: // Inside Right (Gift/QR)
+            case 2: // Inside Right
                 return (
                     <div className="w-full h-full bg-[#fffbf0] text-slate-800 p-8 flex flex-col items-center justify-center relative border-l border-slate-200">
                         <div className="text-center">
                             <span className="material-symbols-outlined text-6xl text-red-500 mb-4">redeem</span>
                             <h3 className="font-christmas text-3xl text-red-700 mb-6">A Little Something</h3>
-                            
                             <div className="bg-white p-4 rounded-xl shadow-inner border border-slate-200 inline-block">
-                                {giftUrl ? (
-                                     <img src={qrCodeUrl} alt="Gift QR" className="w-32 h-32" />
-                                ) : (
-                                     <div className="w-32 h-32 bg-slate-100 flex items-center justify-center text-slate-400 text-xs">
-                                         No Gift URL
-                                     </div>
-                                )}
+                                {giftUrl ? <img src={qrCodeUrl} alt="Gift QR" className="w-32 h-32" /> : <div className="w-32 h-32 bg-slate-100 flex items-center justify-center text-slate-400 text-xs">No Gift URL</div>}
                             </div>
-                            
-                            <p className="mt-6 text-sm font-serif text-slate-600 italic max-w-xs mx-auto">
-                                Scan the code to unwrap your digital surprise!
-                            </p>
+                            <p className="mt-6 text-sm font-serif text-slate-600 italic max-w-xs mx-auto">Scan the code to unwrap your digital surprise!</p>
                         </div>
                     </div>
                 );
@@ -115,97 +163,116 @@ const CardWorkshop: React.FC<Props> = ({ onBack, memory, updateMemory }) => {
                         <div className="mb-12 text-center">
                             <div className="flex items-center justify-center gap-2 mb-2">
                                 <span className="material-symbols-outlined">auto_awesome</span>
-                                <span className="font-christmas text-xl text-slate-500">Holiday Vibe Pipeline</span>
+                                <span className="font-christmas text-xl text-slate-500">Holiday Factory</span>
                             </div>
                             <p className="text-xs uppercase tracking-widest">Designed with Gemini 2.5</p>
-                            <p className="text-[10px] mt-1">Made in Vibe Studio</p>
                         </div>
                     </div>
                 );
-            default:
-                return null;
+            default: return null;
         }
     };
 
     return (
-        <div className="bg-slate-800/30 backdrop-blur-md border border-white/10 rounded-2xl p-6 shadow-2xl">
-            <div className="flex items-center justify-between mb-6">
-                <button onClick={onBack} className="text-slate-400 hover:text-white flex items-center">
-                    <span className="material-symbols-outlined mr-1">arrow_back</span> Back
-                </button>
-                <h2 className="text-2xl font-christmas text-red-300">Holiday Card Publisher</h2>
-            </div>
-
-            <div className="flex flex-col lg:flex-row gap-8">
-                {/* Controls */}
-                <div className="w-full lg:w-1/3 space-y-4">
-                    <div className="p-4 bg-slate-900/50 rounded-xl border border-white/5 space-y-4">
-                        <div>
-                            <label className="block text-slate-400 text-xs uppercase font-bold mb-2">Recipient</label>
-                            <input 
-                                value={recipient}
-                                onChange={e => setRecipient(e.target.value)}
-                                className="w-full bg-slate-800 border border-slate-600 rounded-lg p-3 text-white focus:ring-1 focus:ring-red-500 outline-none"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-slate-400 text-xs uppercase font-bold mb-2">Gift URL (for QR)</label>
-                            <input 
-                                value={giftUrl}
-                                onChange={e => setGiftUrl(e.target.value)}
-                                placeholder="https://..."
-                                className="w-full bg-slate-800 border border-slate-600 rounded-lg p-3 text-white focus:ring-1 focus:ring-red-500 outline-none"
-                            />
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-amber-300 bg-amber-900/20 p-2 rounded">
-                             <span className="material-symbols-outlined text-sm">auto_fix_high</span>
-                             Vibe: {memory.vibe}
-                        </div>
+        <div className="bg-slate-800/30 backdrop-blur-md border border-white/10 rounded-2xl p-6 shadow-2xl min-h-[600px] flex flex-col md:flex-row gap-8">
+            {/* Left Panel: Inputs & Chat */}
+            <div className="w-full md:w-1/3 flex flex-col gap-4">
+                <div className="bg-slate-900/50 p-4 rounded-xl border border-white/5">
+                    <h3 className="font-christmas text-2xl text-red-300 mb-4">Card Settings</h3>
+                    
+                    <div className="mb-4">
+                        <label className="block text-slate-400 text-xs uppercase font-bold mb-1">Recipient</label>
+                        <input value={recipient} onChange={e => setRecipient(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white focus:border-red-500 outline-none" />
                     </div>
+                    
+                    <div className="mb-4">
+                         <label className="block text-slate-400 text-xs uppercase font-bold mb-1">Gift URL (Optional)</label>
+                         <input value={giftUrl} onChange={e => setGiftUrl(e.target.value)} placeholder="https://..." className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white focus:border-red-500 outline-none" />
+                    </div>
+                </div>
+
+                <div className="flex-1 bg-slate-900/50 p-4 rounded-xl border border-white/5 flex flex-col">
+                    <div className="flex gap-2 mb-4 bg-slate-800 p-1 rounded-lg">
+                        <button onClick={() => setMode(InputMode.TEXT)} className={`flex-1 py-2 rounded text-sm font-bold transition-all ${mode === InputMode.TEXT ? 'bg-slate-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
+                            Text Draft
+                        </button>
+                        <button onClick={() => setMode(InputMode.VOICE)} className={`flex-1 py-2 rounded text-sm font-bold transition-all ${mode === InputMode.VOICE ? 'bg-red-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
+                            Live Elf Chat
+                        </button>
+                    </div>
+
+                    {mode === InputMode.TEXT ? (
+                        <div className="flex-1 flex flex-col">
+                            <label className="block text-slate-400 text-xs uppercase font-bold mb-2">Describe your Vibe & Message</label>
+                            <textarea 
+                                value={textInput} 
+                                onChange={e => setTextInput(e.target.value)}
+                                className="flex-1 w-full bg-slate-800 border border-slate-600 rounded p-3 text-white focus:border-red-500 outline-none resize-none"
+                                placeholder="E.g. I want a funny card for my brother involving a reindeer..."
+                            />
+                        </div>
+                    ) : (
+                        <div className="flex-1 flex flex-col relative">
+                            <div className="flex-1 bg-black/20 rounded-lg p-3 overflow-y-auto mb-4 text-sm space-y-2 h-48 border border-white/5 scroll-smooth" ref={scrollRef}>
+                                {history.length === 0 && !currentTurn.user && <p className="text-slate-600 italic text-center mt-8">Connect to brainstorm with the elf...</p>}
+                                {history.map((h, i) => (
+                                    <p key={i} className={h.role === 'user' ? 'text-slate-300' : 'text-green-300'}>
+                                        <span className="font-bold text-xs opacity-50 block uppercase">{h.role}</span>
+                                        {h.text}
+                                    </p>
+                                ))}
+                                {currentTurn.user && <p className="text-slate-300 opacity-60"><span className="font-bold text-xs opacity-50 block uppercase">USER</span>{currentTurn.user}</p>}
+                                {currentTurn.elf && <p className="text-green-300 opacity-60"><span className="font-bold text-xs opacity-50 block uppercase">ELF</span>{currentTurn.elf}</p>}
+                            </div>
+                            
+                            <button 
+                                onClick={toggleConnection}
+                                className={`w-full py-3 rounded-lg font-bold flex items-center justify-center gap-2 transition-all ${connected ? 'bg-red-500/20 text-red-300 border border-red-500/50 hover:bg-red-500/30' : 'bg-green-600 hover:bg-green-500 text-white shadow-lg'}`}
+                            >
+                                <span className="material-symbols-outlined">{connected ? 'mic_off' : 'mic'}</span>
+                                {connected ? 'End Chat' : 'Start Brainstorming'}
+                            </button>
+                            {connected && (
+                                <div className="absolute top-2 right-2 w-3 h-3 bg-red-500 rounded-full animate-pulse shadow-[0_0_10px_red]"></div>
+                            )}
+                        </div>
+                    )}
 
                     <button 
                         onClick={generateAssets}
                         disabled={loading}
-                        className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 ${loading ? 'bg-slate-700' : 'bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-900/20'}`}
+                        className={`w-full mt-4 py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all ${loading ? 'bg-slate-700 cursor-wait' : 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-black shadow-lg shadow-amber-900/30'}`}
                     >
-                        {loading ? 'Elves are crafting...' : 'Generate Card Assets'}
+                        {loading ? <span className="material-symbols-outlined animate-spin">refresh</span> : <span className="material-symbols-outlined">auto_fix_high</span>}
+                        {loading ? 'Creating Magic...' : 'Generate Card'}
                     </button>
-                    
-                    <div className="flex justify-between items-center bg-black/20 p-2 rounded-lg">
-                        <button onClick={() => setActivePage(Math.max(0, activePage - 1))} className="p-2 hover:bg-white/10 rounded-full">
-                            <span className="material-symbols-outlined">chevron_left</span>
-                        </button>
-                        <div className="flex gap-2">
-                             {[0,1,2,3].map(i => (
-                                 <div 
-                                    key={i} 
-                                    onClick={() => setActivePage(i)}
-                                    className={`w-2 h-2 rounded-full cursor-pointer ${activePage === i ? 'bg-red-400' : 'bg-slate-600'}`}
-                                 />
-                             ))}
-                        </div>
-                        <button onClick={() => setActivePage(Math.min(3, activePage + 1))} className="p-2 hover:bg-white/10 rounded-full">
-                            <span className="material-symbols-outlined">chevron_right</span>
-                        </button>
-                    </div>
-                    
-                    <div className="text-center text-xs text-slate-500">
-                        Current View: {['Cover Page', 'Inside: Letter', 'Inside: Gift', 'Back Page'][activePage]}
+                </div>
+            </div>
+
+            {/* Right Panel: Preview */}
+            <div className="w-full md:w-2/3 flex flex-col items-center justify-center bg-black/20 rounded-2xl border border-white/5 p-4 relative">
+                <div className="relative w-[400px] h-[560px] shadow-2xl transition-all duration-500 transform perspective-1000">
+                    <div className="w-full h-full bg-white rounded-r-lg rounded-l-sm overflow-hidden relative shadow-lg">
+                        <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-black/20 to-transparent z-20 pointer-events-none"></div>
+                        {renderPageContent()}
                     </div>
                 </div>
 
-                {/* Preview Area */}
-                <div className="w-full lg:w-2/3 flex items-center justify-center">
-                    <div className="relative w-[400px] h-[560px] shadow-2xl transition-all duration-500 transform perspective-1000">
-                         {/* Card Page Container */}
-                         <div className="w-full h-full bg-white rounded-r-lg rounded-l-sm overflow-hidden relative shadow-lg">
-                             {/* Spine effect */}
-                             <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-black/20 to-transparent z-20 pointer-events-none"></div>
-                             
-                             {renderPageContent()}
-                         </div>
+                {/* Pagination */}
+                <div className="mt-8 flex gap-4 bg-slate-900/80 p-2 rounded-full border border-white/10 backdrop-blur">
+                    <button onClick={() => setActivePage(Math.max(0, activePage - 1))} className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-white/10 transition-colors">
+                        <span className="material-symbols-outlined">chevron_left</span>
+                    </button>
+                    <div className="flex items-center gap-2 px-2">
+                        {[0,1,2,3].map(i => (
+                             <div key={i} onClick={() => setActivePage(i)} className={`w-2.5 h-2.5 rounded-full cursor-pointer transition-all ${activePage === i ? 'bg-red-500 scale-125' : 'bg-slate-600 hover:bg-slate-500'}`} />
+                        ))}
                     </div>
+                    <button onClick={() => setActivePage(Math.min(3, activePage + 1))} className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-white/10 transition-colors">
+                        <span className="material-symbols-outlined">chevron_right</span>
+                    </button>
                 </div>
+                <p className="text-xs text-slate-500 mt-2 uppercase tracking-widest">{['Cover Page', 'Letter', 'Gift', 'Back'][activePage]}</p>
             </div>
         </div>
     );

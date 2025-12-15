@@ -4,39 +4,27 @@ import { base64ToUint8Array, createPcmBlob, decodeAudioData } from './audioUtils
 // Utility helper to get fresh AI instance (crucial for API Key selection flows)
 const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-export const generateHolidayVibeImage = async (prompt: string, base64Image?: string, mimeType?: string) => {
+export const generateHolidayVibeImage = async (context: string, imageBase64?: string, imageMime?: string) => {
   const ai = getAI();
   const model = "gemini-2.5-flash-image";
   
-  let contents: any = {};
+  const parts: any[] = [];
   
-  if (base64Image && mimeType) {
-    // Editing/Variation flow
-    contents = {
-      parts: [
-        {
+  if (imageBase64 && imageMime) {
+      parts.push({
           inlineData: {
-            data: base64Image,
-            mimeType: mimeType
+              data: imageBase64,
+              mimeType: imageMime
           }
-        },
-        { text: prompt }
-      ]
-    };
+      });
+      parts.push({ text: `Edit this image. Visual style and theme based on this description: ${context}. Keep the main subject intact.` });
   } else {
-    // Generation flow
-    contents = {
-      parts: [{ text: prompt }]
-    };
+      parts.push({ text: `A high quality, festive holiday card background. Visual style and theme based on this description: ${context}. No text on the image.` });
   }
 
   const response = await ai.models.generateContent({
     model,
-    contents,
-    config: {
-       // Nanobanana / Flash Image specific configs if needed
-       // Note: responseMimeType not supported for this model
-    }
+    contents: { parts },
   });
 
   // Extract image
@@ -48,11 +36,58 @@ export const generateHolidayVibeImage = async (prompt: string, base64Image?: str
   throw new Error("No image generated");
 };
 
-export const generateCardText = async (theme: string, recipient: string) => {
+export const generateVeoVideo = async (prompt: string, imageBase64?: string, imageMime?: string) => {
+    const ai = getAI();
+    const model = 'veo-3.1-fast-generate-preview';
+
+    const request: any = {
+        model,
+        prompt, 
+        config: {
+            numberOfVideos: 1,
+            resolution: '720p',
+            aspectRatio: '16:9'
+        }
+    };
+
+    if (imageBase64 && imageMime) {
+        request.image = {
+            imageBytes: imageBase64,
+            mimeType: imageMime
+        };
+    }
+
+    let operation = await ai.models.generateVideos(request);
+
+    while (!operation.done) {
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        operation = await ai.operations.getVideosOperation({operation: operation});
+    }
+
+    const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
+    if (!videoUri) throw new Error("Video generation failed");
+
+    return `${videoUri}&key=${process.env.API_KEY}`;
+};
+
+export const generateCardText = async (context: string, recipient: string) => {
   const ai = getAI();
+  
+  const prompt = `
+    Task: Write a short, heartwarming Christmas card message for ${recipient}.
+    
+    Context/Style Source:
+    "${context}"
+    
+    Instructions:
+    - If the source is a conversation, extract the user's intent and preferred tone.
+    - Keep it under 60 words.
+    - Be creative and match the requested vibe.
+  `;
+
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
-    contents: `Write a short, heartwarming Christmas card message for ${recipient}. The theme is: ${theme}. Keep it under 50 words.`,
+    contents: prompt,
     config: {
         tools: [{ googleSearch: {} }] // Use search to find trending holiday greetings if needed
     }
@@ -61,40 +96,6 @@ export const generateCardText = async (theme: string, recipient: string) => {
   // Also return grounding chunks if any
   const grounding = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
   return { text: response.text, grounding };
-};
-
-export const generateVeoVideo = async (prompt: string, imageBase64: string, imageMime: string) => {
-  const ai = getAI();
-  // VEO requires specific API Key selection in browser environment if not already set, 
-  // but we assume the wrapping component handles the UI trigger for `window.aistudio.openSelectKey()`
-  
-  // We use the 'fast' preview for interactive demo speed
-  let operation = await ai.models.generateVideos({
-    model: 'veo-3.1-fast-generate-preview',
-    prompt: prompt,
-    image: {
-      imageBytes: imageBase64,
-      mimeType: imageMime
-    },
-    config: {
-      numberOfVideos: 1,
-      resolution: '720p',
-      aspectRatio: '16:9' // Landscape for memories
-    }
-  });
-
-  while (!operation.done) {
-    await new Promise(resolve => setTimeout(resolve, 3000)); // Poll every 3s
-    operation = await ai.operations.getVideosOperation({ operation });
-  }
-
-  const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
-  if (!videoUri) throw new Error("Video generation failed");
-  
-  // Fetch the actual video bytes using the key
-  const res = await fetch(`${videoUri}&key=${process.env.API_KEY}`);
-  const blob = await res.blob();
-  return URL.createObjectURL(blob);
 };
 
 // Live API Class
@@ -156,7 +157,7 @@ export class HolidayLiveAgent {
       },
       config: {
         responseModalities: [Modality.AUDIO],
-        systemInstruction: "You are a warm, cheerful Holiday Elf assistant helping the user plan their Christmas. Be concise, festive, and fun.",
+        systemInstruction: "You are a creative Holiday Card consultant. Your goal is to ask the user questions to help design the perfect Christmas card. Ask about the recipient, the vibe (cozy, funny, elegant), and the message. Keep responses short and conversational.",
         speechConfig: {
           voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } }
         },
