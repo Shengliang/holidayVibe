@@ -1,0 +1,7 @@
+{
+  "name": "Holiday Vibe Pipeline",
+  "description": "A festive multi-agent workshop experience connecting creativity, memories, and charity using Gemini 2.5, Veo, and Live API.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
