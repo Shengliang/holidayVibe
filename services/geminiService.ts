@@ -1,4 +1,5 @@
-import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
+
+import { GoogleGenAI, LiveServerMessage, Modality, Type, FunctionDeclaration } from "@google/genai";
 import { base64ToUint8Array, createPcmBlob, decodeAudioData } from './audioUtils';
 
 // Utility helper to get fresh AI instance (crucial for API Key selection flows)
@@ -19,7 +20,7 @@ export const generateHolidayVibeImage = async (context: string, imageBase64?: st
       });
       parts.push({ text: `Edit this image. Visual style and theme based on this description: ${context}. Keep the main subject intact.` });
   } else {
-      parts.push({ text: `A high quality, festive holiday card background. Visual style and theme based on this description: ${context}. No text on the image.` });
+      parts.push({ text: `A high quality, festive holiday card cover art. Visual style and theme based on this description: ${context}. No text on the image.` });
   }
 
   const response = await ai.models.generateContent({
@@ -34,6 +35,28 @@ export const generateHolidayVibeImage = async (context: string, imageBase64?: st
     }
   }
   throw new Error("No image generated");
+};
+
+export const generateHolidayBackground = async (context: string) => {
+  const ai = getAI();
+  const model = "gemini-2.5-flash-image";
+  
+  const prompt = `A subtle, high-quality holiday paper texture or background pattern. 
+  Theme: ${context}. 
+  Style: Elegant, light opacity, suitable for writing text over it. 
+  No text, no central subject, just atmospheric texture.`;
+
+  const response = await ai.models.generateContent({
+    model,
+    contents: { parts: [{ text: prompt }] },
+  });
+
+  for (const part of response.candidates?.[0]?.content?.parts || []) {
+    if (part.inlineData) {
+      return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+    }
+  }
+  return null;
 };
 
 export const generateVeoVideo = async (prompt: string, imageBase64?: string, imageMime?: string) => {
@@ -108,12 +131,13 @@ export class HolidayLiveAgent {
   private sources = new Set<AudioBufferSourceNode>();
   
   public onTranscriptUpdate: ((input: string, output: string, turnComplete: boolean) => void) | null = null;
+  public onGenerateTrigger: (() => void) | null = null;
 
   constructor() {
     this.ai = getAI();
   }
 
-  async connect() {
+  async connect(initialContext: string = "") {
     this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
     this.inputContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
     const outputNode = this.audioContext.createGain();
@@ -122,6 +146,22 @@ export class HolidayLiveAgent {
     // Get Mic Stream
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     
+    // Define Tools
+    const tools = [{
+      functionDeclarations: [{
+        name: "generate_card",
+        description: "Triggers the generation of the holiday card. Call this immediately when the user says 'generate card', 'I'm done', 'make it', 'create card', or indicates they are satisfied with the brainstorm.",
+        parameters: { type: Type.OBJECT, properties: {} }
+      }]
+    }];
+
+    const systemInstruction = `You are a creative Holiday Card consultant. 
+    Your goal is to help design the perfect card. 
+    1. Ask about recipient, vibe, and message.
+    2. When the user says "generate card" or implies they are done, YOU MUST CALL the "generate_card" tool.
+    3. Keep responses short and conversational.
+    ${initialContext ? `User has provided initial context: "${initialContext}". Use this to start.` : ''}`;
+
     this.sessionPromise = this.ai.live.connect({
       model: 'gemini-2.5-flash-native-audio-preview-09-2025',
       callbacks: {
@@ -129,6 +169,26 @@ export class HolidayLiveAgent {
           this.startAudioStream(stream);
         },
         onmessage: async (message: LiveServerMessage) => {
+             // Handle Tool Calls (Voice Control Trigger)
+             if (message.toolCall) {
+               console.log("Tool called:", message.toolCall);
+               // Send empty response to acknowledge tool
+               this.sessionPromise?.then(session => {
+                  session.sendToolResponse({
+                    functionResponses: message.toolCall!.functionCalls.map(fc => ({
+                      id: fc.id,
+                      name: fc.name,
+                      response: { result: "ok" }
+                    }))
+                  });
+               });
+
+               // Trigger frontend callback
+               if (this.onGenerateTrigger) {
+                 this.onGenerateTrigger();
+               }
+             }
+
              // Handle Audio
              const audioData = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
              if (audioData && this.audioContext) {
@@ -156,8 +216,9 @@ export class HolidayLiveAgent {
         onerror: (e) => console.error("Live session error", e)
       },
       config: {
+        tools: tools,
         responseModalities: [Modality.AUDIO],
-        systemInstruction: "You are a creative Holiday Card consultant. Your goal is to ask the user questions to help design the perfect Christmas card. Ask about the recipient, the vibe (cozy, funny, elegant), and the message. Keep responses short and conversational.",
+        systemInstruction: systemInstruction,
         speechConfig: {
           voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } }
         },

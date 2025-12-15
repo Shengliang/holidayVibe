@@ -1,6 +1,7 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { AgentMemory } from '../types';
-import { generateCardText, generateHolidayVibeImage, HolidayLiveAgent } from '../services/geminiService';
+import { generateCardText, generateHolidayVibeImage, generateHolidayBackground, HolidayLiveAgent } from '../services/geminiService';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 
@@ -17,6 +18,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
     const [activePage, setActivePage] = useState(0);
     const [loading, setLoading] = useState(false);
     const [generatingPdf, setGeneratingPdf] = useState(false);
+    const [generationStatus, setGenerationStatus] = useState<string>("");
     
     // Gift State
     const [giftType, setGiftType] = useState<GiftType>('URL');
@@ -70,7 +72,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
         }
     };
 
-    // Pre-fetch QR Code as Data URL to ensure it renders in HTML2Canvas (PDF)
+    // Pre-fetch QR Code as Data URL
     useEffect(() => {
         let active = true;
         const fetchQr = async () => {
@@ -78,9 +80,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                 setQrCodeDataUrl(null);
                 return;
             }
-            // Use white dots on black background to match original design
             const url = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(getQrData())}&color=255-255-255&bgcolor=000-000-000&format=png`;
-            
             try {
                 const response = await fetch(url);
                 const blob = await response.blob();
@@ -93,18 +93,23 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                 console.error("Failed to load QR code for PDF", e);
             }
         };
-
         fetchQr();
         return () => { active = false; };
     }, [giftValue, giftType, giftProvider]);
 
+    const handleDisconnect = async () => {
+        if (agentRef.current) await agentRef.current.disconnect();
+        setConnected(false);
+        agentRef.current = null;
+    };
+
     const toggleConnection = async () => {
         if (connected) {
-            if (agentRef.current) await agentRef.current.disconnect();
-            setConnected(false);
-            agentRef.current = null;
+            await handleDisconnect();
         } else {
             agentRef.current = new HolidayLiveAgent();
+            
+            // Handle Conversation Updates
             agentRef.current.onTranscriptUpdate = (input, output, turnComplete) => {
                 setCurrentTurn(prev => ({ user: prev.user + input, elf: prev.elf + output }));
                 
@@ -118,8 +123,17 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                     });
                 }
             };
+
+            // Handle Voice-Triggered Generation
+            agentRef.current.onGenerateTrigger = () => {
+                console.log("Trigger received from Agent Tool Call");
+                handleDisconnect(); // Stop call
+                generateAssets(); // Start generation
+            };
+
             try {
-                await agentRef.current.connect();
+                // Pass text input as initial context if user typed before connecting
+                await agentRef.current.connect(textInput);
                 setConnected(true);
             } catch(e) {
                 alert("Connection failed. Check permissions.");
@@ -142,6 +156,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
 
     const generateAssets = async () => {
         setLoading(true);
+        setGenerationStatus("Creating magic...");
         try {
             // Combine history for context
             let context = history.map(h => `${h.role}: ${h.text}`).join('\n');
@@ -158,13 +173,20 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
 
             const updates: Partial<AgentMemory> = { conversationContext: context };
             
+            setGenerationStatus("Writing your message...");
             // 1. Generate Text
             const textData = await generateCardText(context, recipient);
             updates.cardMessage = textData.text;
             
-            // 2. Generate Image
+            setGenerationStatus("Painting the cover...");
+            // 2. Generate Cover Image
             const imageUrl = await generateHolidayVibeImage(context);
             updates.generatedCardUrl = imageUrl;
+
+            setGenerationStatus("Designing themed stationery...");
+            // 3. Generate Background Texture (for inside pages)
+            const bgUrl = await generateHolidayBackground(context);
+            updates.generatedBackgroundUrl = bgUrl;
 
             updates.recipientName = recipient;
             updates.giftUrl = giftValue;
@@ -177,17 +199,8 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
             alert("Card generation failed. Please try again.");
         } finally {
             setLoading(false);
+            setGenerationStatus("");
         }
-    };
-
-    const handleMainAction = async () => {
-        if (connected) {
-            // Finish & Generate Flow
-            if (agentRef.current) await agentRef.current.disconnect();
-            setConnected(false);
-            agentRef.current = null;
-        }
-        await generateAssets();
     };
 
     const downloadPDF = async () => {
@@ -206,7 +219,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                 const canvas = await html2canvas(pageElement, {
                     scale: 2,
                     useCORS: true,
-                    allowTaint: true, // Allow tainted canvas if needed (though dataURL prevents it)
+                    allowTaint: true,
                     backgroundColor: null,
                     logging: false
                 });
@@ -227,6 +240,17 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
     };
 
     const renderPageContent = (pageIndex: number) => {
+        // Shared background style for non-cover pages
+        const bgStyle: React.CSSProperties = memory.generatedBackgroundUrl ? {
+            backgroundImage: `url(${memory.generatedBackgroundUrl})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            backgroundColor: '#fffbf0' // fallback
+        } : { backgroundColor: '#fffbf0' };
+
+        // Overlay for readability if using image background
+        const overlayClass = memory.generatedBackgroundUrl ? "bg-white/80" : "";
+
         switch(pageIndex) {
             case 0: // Cover
                 return (
@@ -247,64 +271,62 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                         )}
                     </div>
                 );
-            case 1: // Inside Left
+            case 1: // Inside Left (Letter)
                 return (
-                    <div className="w-full h-full bg-[#fffbf0] text-slate-800 p-8 flex flex-col relative">
-                        <div className="flex-1 overflow-y-auto">
-                            <p className="font-christmas text-2xl text-red-700 mb-4">Dear {recipient},</p>
-                            <p className="font-serif leading-relaxed text-lg whitespace-pre-line">
-                                {memory.cardMessage || "Your heartfelt message will appear here..."}
-                            </p>
-                        </div>
-                        <div className="mt-8 pt-4 border-t border-red-200 text-right">
-                             <p className="font-christmas text-xl text-red-700">Warmly,</p>
-                             <p className="font-serif">The Elves</p>
+                    <div className="w-full h-full text-slate-800 flex flex-col relative" style={bgStyle}>
+                        <div className={`w-full h-full p-8 flex flex-col ${overlayClass}`}>
+                            <div className="flex-1 overflow-y-auto">
+                                <p className="font-christmas text-2xl text-red-700 mb-4">Dear {recipient},</p>
+                                <p className="font-serif leading-relaxed text-lg whitespace-pre-line">
+                                    {memory.cardMessage || "Your heartfelt message will appear here..."}
+                                </p>
+                            </div>
+                            <div className="mt-8 pt-4 border-t border-red-200 text-right">
+                                <p className="font-christmas text-xl text-red-700">Warmly,</p>
+                                <p className="font-serif">The Elves</p>
+                            </div>
                         </div>
                     </div>
                 );
-            case 2: // Inside Right
+            case 2: // Inside Right (Gift)
                 return (
-                    <div className="w-full h-full bg-[#fffbf0] text-slate-800 p-8 flex flex-col items-center justify-center relative border-l border-slate-200">
-                        <div className="text-center">
-                            <span className="material-symbols-outlined text-6xl text-red-500 mb-4">redeem</span>
-                            <h3 className="font-christmas text-3xl text-red-700 mb-6">A Little Something</h3>
-                            <div className="bg-white p-4 rounded-xl shadow-inner border border-slate-200 inline-block">
-                                {giftValue && qrCodeDataUrl ? (
-                                    <img src={qrCodeDataUrl} alt="Gift QR" className="w-32 h-32" />
-                                ) : (
-                                    <div className="w-32 h-32 bg-slate-100 flex items-center justify-center text-slate-400 text-xs">
-                                        {giftValue ? "Loading..." : "No Gift Added"}
-                                    </div>
-                                )}
+                    <div className="w-full h-full text-slate-800 flex flex-col relative border-l border-slate-200/50" style={bgStyle}>
+                        <div className={`w-full h-full p-8 flex flex-col items-center justify-center ${overlayClass}`}>
+                            <div className="text-center">
+                                <span className="material-symbols-outlined text-6xl text-red-500 mb-4">redeem</span>
+                                <h3 className="font-christmas text-3xl text-red-700 mb-6">A Little Something</h3>
+                                <div className="bg-white p-4 rounded-xl shadow-inner border border-slate-200 inline-block">
+                                    {giftValue && qrCodeDataUrl ? (
+                                        <img src={qrCodeDataUrl} alt="Gift QR" className="w-32 h-32" />
+                                    ) : (
+                                        <div className="w-32 h-32 bg-slate-100 flex items-center justify-center text-slate-400 text-xs">
+                                            {giftValue ? "Loading..." : "No Gift Added"}
+                                        </div>
+                                    )}
+                                </div>
+                                <p className="mt-6 text-sm font-serif text-slate-600 italic max-w-xs mx-auto">
+                                    {giftType === 'CODE' && giftProvider === 'APPLE' ? 'Scan to redeem on App Store' : 'Scan to unwrap your surprise!'}
+                                </p>
                             </div>
-                            <p className="mt-6 text-sm font-serif text-slate-600 italic max-w-xs mx-auto">
-                                {giftType === 'CODE' && giftProvider === 'APPLE' ? 'Scan to redeem on App Store' : 'Scan to unwrap your surprise!'}
-                            </p>
                         </div>
                     </div>
                 );
             case 3: // Back
                 return (
-                    <div className="w-full h-full bg-slate-100 text-slate-400 flex flex-col items-center justify-end p-8">
-                        <div className="mb-12 text-center">
-                            <div className="flex items-center justify-center gap-2 mb-2">
-                                <span className="material-symbols-outlined">auto_awesome</span>
-                                <span className="font-christmas text-xl text-slate-500">Holiday Factory</span>
+                    <div className="w-full h-full text-slate-400 flex flex-col items-center justify-end" style={bgStyle}>
+                         <div className={`w-full h-full p-8 flex flex-col items-center justify-end ${overlayClass}`}>
+                            <div className="mb-12 text-center">
+                                <div className="flex items-center justify-center gap-2 mb-2">
+                                    <span className="material-symbols-outlined">auto_awesome</span>
+                                    <span className="font-christmas text-xl text-slate-500">Holiday Factory</span>
+                                </div>
+                                <p className="text-xs uppercase tracking-widest">Designed with Gemini 2.5</p>
                             </div>
-                            <p className="text-xs uppercase tracking-widest">Designed with Gemini 2.5</p>
                         </div>
                     </div>
                 );
             default: return null;
         }
-    };
-
-    // Helper to get button text
-    const getActionButtonText = () => {
-        if (loading) return "Creating Magic...";
-        if (connected) return "Finish & Create Card";
-        if (history.length > 0 || textInput.trim()) return "Create Card from Chat";
-        return "Create Card";
     };
 
     return (
@@ -353,12 +375,6 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                                  <span className="material-symbols-outlined text-sm">{showGiftCode ? 'visibility_off' : 'visibility'}</span>
                              </button>
                          </div>
-                         {giftType === 'CODE' && giftProvider === 'APPLE' && giftValue && (
-                             <p className="text-[10px] text-green-400 mt-1 flex items-center gap-1">
-                                 <span className="material-symbols-outlined text-[10px]">lock</span>
-                                 Encoded as secure redeem link
-                             </p>
-                         )}
                     </div>
                 </div>
 
@@ -371,7 +387,11 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                     <div className="flex-1 flex flex-col relative">
                         {/* Chat History */}
                         <div className="flex-1 bg-black/20 rounded-lg p-3 overflow-y-auto mb-2 text-sm space-y-2 h-40 border border-white/5 scroll-smooth" ref={scrollRef}>
-                            {history.length === 0 && !currentTurn.user && !textInput && <p className="text-slate-600 italic text-center mt-8">Type a message or use voice to brainstorm...</p>}
+                            {history.length === 0 && !currentTurn.user && !textInput && <p className="text-slate-600 italic text-center mt-8 text-xs">
+                                1. Type ideas (optional)<br/>
+                                2. Tap Mic to chat<br/>
+                                3. Say "Generate Card" to finish
+                            </p>}
                             {history.map((h, i) => (
                                 <p key={i} className={h.role === 'user' ? 'text-slate-300' : 'text-green-300'}>
                                     <span className="font-bold text-xs opacity-50 block uppercase">{h.role}</span>
@@ -382,7 +402,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                             {currentTurn.elf && <p className="text-green-300 opacity-60"><span className="font-bold text-xs opacity-50 block uppercase">ELF</span>{currentTurn.elf}</p>}
                         </div>
                         
-                        {/* Hybrid Input Area */}
+                        {/* Input Area */}
                         <div className="flex gap-2">
                             <div className="flex-1 relative">
                                 <input 
@@ -390,7 +410,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                                     value={textInput}
                                     onChange={(e) => setTextInput(e.target.value)}
                                     onKeyDown={handleKeyDown}
-                                    placeholder="Type your idea..."
+                                    placeholder="Add context..."
                                     className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:border-red-500 outline-none text-sm pr-8"
                                 />
                                 <button 
@@ -412,16 +432,23 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                         </div>
                     </div>
 
-                    <button 
-                        onClick={handleMainAction}
-                        disabled={loading}
-                        className={`w-full mt-4 py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all ${loading ? 'bg-slate-700 cursor-wait' : 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-black shadow-lg shadow-amber-900/30'}`}
-                    >
-                        <span className={`material-symbols-outlined ${loading ? 'animate-spin' : ''}`}>
-                            {loading ? 'refresh' : (connected ? 'check_circle' : 'auto_fix_high')}
-                        </span>
-                        {getActionButtonText()}
-                    </button>
+                    {/* Status / Manual Trigger */}
+                    <div className="mt-4 text-center">
+                        {loading ? (
+                             <div className="flex items-center justify-center gap-2 text-amber-400 animate-pulse">
+                                 <span className="material-symbols-outlined animate-spin">auto_mode</span>
+                                 <span className="text-sm font-bold">{generationStatus || "Generating..."}</span>
+                             </div>
+                        ) : (
+                            <button 
+                                onClick={generateAssets} 
+                                className="text-xs text-slate-500 hover:text-slate-300 underline"
+                                title="Use this if voice trigger fails"
+                            >
+                                Manual Generate (Fallback)
+                            </button>
+                        )}
+                    </div>
                 </div>
             </div>
 
