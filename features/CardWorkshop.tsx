@@ -22,6 +22,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
     const [giftType, setGiftType] = useState<GiftType>('URL');
     const [giftProvider, setGiftProvider] = useState<GiftProvider>('APPLE');
     const [showGiftCode, setShowGiftCode] = useState(false);
+    const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
     
     // Data State
     const [recipient, setRecipient] = useState(memory.recipientName || 'Family');
@@ -49,6 +50,53 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
         }
     }, [history, currentTurn]);
+
+    // Smart QR Logic
+    const getQrData = () => {
+        if (!giftValue) return 'https://google.com';
+        
+        if (giftType === 'URL') return giftValue;
+        
+        // Handle Redeem Codes
+        switch (giftProvider) {
+            case 'APPLE':
+                return `https://apps.apple.com/redeem?code=${giftValue}`;
+            case 'GOOGLE':
+                return `https://play.google.com/redeem?code=${giftValue}`;
+            case 'AMAZON':
+                return `https://www.amazon.com/gc/redeem?claimCode=${giftValue}`;
+            default:
+                return giftValue;
+        }
+    };
+
+    // Pre-fetch QR Code as Data URL to ensure it renders in HTML2Canvas (PDF)
+    useEffect(() => {
+        let active = true;
+        const fetchQr = async () => {
+            if (!giftValue) {
+                setQrCodeDataUrl(null);
+                return;
+            }
+            // Use white dots on black background to match original design
+            const url = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(getQrData())}&color=255-255-255&bgcolor=000-000-000&format=png`;
+            
+            try {
+                const response = await fetch(url);
+                const blob = await response.blob();
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    if (active) setQrCodeDataUrl(reader.result as string);
+                };
+                reader.readAsDataURL(blob);
+            } catch (e) {
+                console.error("Failed to load QR code for PDF", e);
+            }
+        };
+
+        fetchQr();
+        return () => { active = false; };
+    }, [giftValue, giftType, giftProvider]);
 
     const toggleConnection = async () => {
         if (connected) {
@@ -158,7 +206,9 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                 const canvas = await html2canvas(pageElement, {
                     scale: 2,
                     useCORS: true,
-                    backgroundColor: null
+                    allowTaint: true, // Allow tainted canvas if needed (though dataURL prevents it)
+                    backgroundColor: null,
+                    logging: false
                 });
                 
                 const imgData = canvas.toDataURL('image/jpeg', 0.95);
@@ -176,27 +226,6 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
         }
     };
 
-    // Smart QR Logic
-    const getQrData = () => {
-        if (!giftValue) return 'https://google.com';
-        
-        if (giftType === 'URL') return giftValue;
-        
-        // Handle Redeem Codes
-        switch (giftProvider) {
-            case 'APPLE':
-                return `https://apps.apple.com/redeem?code=${giftValue}`;
-            case 'GOOGLE':
-                return `https://play.google.com/redeem?code=${giftValue}`;
-            case 'AMAZON':
-                return `https://www.amazon.com/gc/redeem?claimCode=${giftValue}`;
-            default:
-                return giftValue;
-        }
-    };
-
-    const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(getQrData())}&color=255-255-255&bgcolor=000-000-000`;
-
     const renderPageContent = (pageIndex: number) => {
         switch(pageIndex) {
             case 0: // Cover
@@ -204,7 +233,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                     <div className="relative w-full h-full bg-slate-800 flex items-center justify-center overflow-hidden">
                         {memory.generatedCardUrl ? (
                             <>
-                                <img src={memory.generatedCardUrl} className="absolute inset-0 w-full h-full object-cover" alt="Cover" />
+                                <img src={memory.generatedCardUrl} className="absolute inset-0 w-full h-full object-cover" alt="Cover" crossOrigin="anonymous" />
                                 <div className="absolute inset-0 bg-black/30"></div>
                                 <div className="relative z-10 text-center p-6 border-4 border-white/20 m-4 h-[90%] flex items-center justify-center">
                                     <h1 className="font-christmas text-5xl text-white drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)]">Merry Christmas</h1>
@@ -240,7 +269,13 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                             <span className="material-symbols-outlined text-6xl text-red-500 mb-4">redeem</span>
                             <h3 className="font-christmas text-3xl text-red-700 mb-6">A Little Something</h3>
                             <div className="bg-white p-4 rounded-xl shadow-inner border border-slate-200 inline-block">
-                                {giftValue ? <img src={qrCodeUrl} alt="Gift QR" className="w-32 h-32" /> : <div className="w-32 h-32 bg-slate-100 flex items-center justify-center text-slate-400 text-xs">No Gift Added</div>}
+                                {giftValue && qrCodeDataUrl ? (
+                                    <img src={qrCodeDataUrl} alt="Gift QR" className="w-32 h-32" />
+                                ) : (
+                                    <div className="w-32 h-32 bg-slate-100 flex items-center justify-center text-slate-400 text-xs">
+                                        {giftValue ? "Loading..." : "No Gift Added"}
+                                    </div>
+                                )}
                             </div>
                             <p className="mt-6 text-sm font-serif text-slate-600 italic max-w-xs mx-auto">
                                 {giftType === 'CODE' && giftProvider === 'APPLE' ? 'Scan to redeem on App Store' : 'Scan to unwrap your surprise!'}
