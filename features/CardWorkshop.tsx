@@ -408,11 +408,16 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
         return doc;
     };
 
+    const getSafeFilename = () => {
+        const safeRecipient = recipient.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'friend';
+        return `holiday-card-${safeRecipient}.pdf`;
+    };
+
     const downloadPDF = async () => {
         setGeneratingPdf(true);
         try {
             const doc = await createPDFDoc();
-            if (doc) doc.save(`holiday-card-${recipient}.pdf`);
+            if (doc) doc.save(getSafeFilename());
         } catch (e) {
             console.error("PDF Generation failed:", e);
             alert("Could not generate PDF.");
@@ -423,25 +428,37 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
 
     const sharePDF = async () => {
         setGeneratingPdf(true);
+        let doc: jsPDF | null = null;
+        const filename = getSafeFilename();
+
         try {
-            const doc = await createPDFDoc();
+            doc = await createPDFDoc();
             if (!doc) return;
             
             const pdfBlob = doc.output('blob');
-            const file = new File([pdfBlob], `holiday-card-${recipient}.pdf`, { type: 'application/pdf' });
+            // Adding lastModified is crucial for some Android apps (like Gmail) to accept the file intent
+            const file = new File([pdfBlob], filename, { type: 'application/pdf', lastModified: Date.now() });
             
-            if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-                await navigator.share({
-                    files: [file],
-                    title: 'Holiday Card',
-                    text: `Here is a holiday card for you, ${recipient}!`,
-                });
+            const shareData = {
+                files: [file],
+                title: 'Holiday Card',
+                text: `Here is a holiday card for you, ${recipient}!`,
+            };
+
+            // STRICT check for file sharing support
+            if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
+                await navigator.share(shareData);
             } else {
-                alert("Sharing files is not supported on this browser/device. Please use Download.");
+                throw new Error("Web Share API not supported for files on this platform.");
             }
-        } catch (e) {
-            console.error("PDF Share failed:", e);
-            alert("Could not share PDF. Try downloading instead.");
+        } catch (e: any) {
+            // Ignore if user simply cancelled the share dialog
+            if (e.name !== 'AbortError') {
+                console.warn("Share failed, falling back to download:", e);
+                alert("Sharing isn't fully supported on this device/browser. Downloading the PDF instead!");
+                // Fallback: Download the file so the user doesn't lose it
+                if (doc) doc.save(filename);
+            }
         } finally {
             setGeneratingPdf(false);
         }
