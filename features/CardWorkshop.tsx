@@ -37,7 +37,8 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
     const [recipient, setRecipient] = useState(memory.recipientName || 'Family');
     const [sender, setSender] = useState(memory.senderName || 'Me');
     const [date, setDate] = useState(memory.date || new Date().toISOString().split('T')[0]);
-    const [contextInput, setContextInput] = useState("Theme: Top trends in career changes and AI technology progress in 2025.\n\nLetter Focus: Encourage work-life balance and resilience. Inspire those looking for job changes, from new graduates to veterans with 20+ years of experience who may have recently lost their jobs.\n\nMessage: Never give up.");
+    // Sync context with default card theme
+    const [contextInput, setContextInput] = useState("Theme: 2025 Career & AI Advancements. Focus: Resilience, Work-Life Balance, and New Beginnings for graduates and veterans.");
     const [giftValue, setGiftValue] = useState(memory.giftUrl || '');
     
     // Album State
@@ -246,6 +247,37 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
                 alert("Connection failed. Check permissions.");
             }
         }
+    };
+
+    const handleClearDefaults = () => {
+        // Reset Local State UI inputs immediately
+        setRecipient('');
+        setSender('');
+        setDate(new Date().toISOString().split('T')[0]);
+        setContextInput(''); // Explicitly clear the long default string
+        setGiftValue('');
+        setAlbumLink('');
+        setIncludeGift(false);
+        setCoverImageIndex(null);
+        setQrCodeDataUrl(null);
+        setAlbumQrUrl(null);
+        
+        // Reset Global Memory (clears Preview)
+        updateMemory({
+            recipientName: '',
+            senderName: '',
+            date: new Date().toISOString().split('T')[0],
+            cardMessage: '',
+            generatedCardUrl: null,
+            generatedBackgroundUrl: null,
+            giftUrl: null,
+            photoAlbumLink: '',
+            conversationContext: '',
+            userImages: []
+        });
+
+        // Reset View to Cover
+        setActivePage(0);
     };
 
     const generateAssets = async () => {
@@ -504,6 +536,19 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
                     
                     {/* SETTINGS VIEW - Standard Block Flow, Hidden if not active */}
                     <div className={`flex-1 overflow-y-auto custom-scrollbar p-4 flex flex-col gap-4 ${leftTab === 'settings' ? 'flex' : 'hidden'}`}>
+                        
+                        {/* Clear Defaults Header */}
+                        <div className="flex justify-between items-center mb-2">
+                             <h3 className="text-slate-400 text-xs font-bold uppercase tracking-wider">Card Details</h3>
+                             <button 
+                                onClick={handleClearDefaults}
+                                className="text-[10px] bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 px-3 py-1 rounded-full transition-colors flex items-center gap-1"
+                             >
+                                <span className="material-symbols-outlined text-sm">restart_alt</span>
+                                Start Fresh
+                             </button>
+                        </div>
+
                         {/* People */}
                         <div className="bg-slate-900/50 p-3 rounded-xl border border-white/5 space-y-3">
                             <div>

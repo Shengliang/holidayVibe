@@ -39,10 +39,13 @@ const App: React.FC = () => {
   const [memory, setMemory] = useState<AgentMemory>({
     recipientName: "My Network",
     senderName: "Sheng-Liang Song",
-    generatedCardUrl: null,
-    cardMessage: "As we step into 2025, the landscape of career and AI is evolving rapidly. Whether you are a new graduate or a veteran with 20+ years of experience navigating recent changes, remember that resilience is key.\n\nPrioritize your work-life balance and never give up on your journey. The right opportunity is waiting for you.\n\nWishing you a year of growth and balance!",
+    date: "2025-12-16",
+    // Default cover image simulating the "AI Christmas" vibe
+    generatedCardUrl: "https://images.unsplash.com/photo-1512389142860-9c449e58a543?q=80&w=1000&auto=format&fit=crop", 
+    // Default message matching the screenshot
+    cardMessage: "As 2025 brings new career paths and AI advancements, remember to prioritize your well-being. To new graduates and veterans navigating changes, embrace resilience. Your journey is unique and valuable. Never give up on your potential. Happy Holidays, and here's to a fulfilling New Year!",
     giftUrl: null,
-    conversationContext: ""
+    conversationContext: "Theme: Career resilience and AI progress in 2025. Focus: Resilience, Work-Life Balance."
   });
 
   const updateMemory = (updates: Partial<AgentMemory>) => {
