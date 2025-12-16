@@ -392,16 +392,19 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
         if (!pdfContainerRef.current) return null;
         const doc = new jsPDF({ orientation: 'portrait', unit: 'px', format: [400, 560] });
         const pages = pdfContainerRef.current.children;
+        
+        if (pages.length === 0) return null;
+
         for (let i = 0; i < pages.length; i++) {
             const pageElement = pages[i] as HTMLElement;
             const canvas = await html2canvas(pageElement, {
                 scale: 2,
                 useCORS: true,
                 allowTaint: true,
-                backgroundColor: null,
+                backgroundColor: '#fffbf0', // Set explicit background to avoid transparency issues
                 logging: false
             });
-            const imgData = canvas.toDataURL('image/jpeg', 0.95);
+            const imgData = canvas.toDataURL('image/jpeg', 0.9);
             if (i > 0) doc.addPage();
             doc.addImage(imgData, 'JPEG', 0, 0, 400, 560);
         }
@@ -409,8 +412,9 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
     };
 
     const getSafeFilename = () => {
-        const safeRecipient = recipient.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'friend';
-        return `holiday-card-${safeRecipient}.pdf`;
+        // Create a safe, compatible filename without special characters
+        const safeRecipient = (recipient || 'friend').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        return `card_${safeRecipient}.pdf`;
     };
 
     const downloadPDF = async () => {
@@ -431,33 +435,56 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
         let doc: jsPDF | null = null;
         const filename = getSafeFilename();
 
+        // 1. Prepare Title and Body for Email
+        const title = `Holiday Card for ${recipient}`;
+        const bodyText = `Hi ${recipient},\n\nI created a personalized holiday card for you! (See attached)\n\nWarmly,\n${sender}`;
+
         try {
             doc = await createPDFDoc();
             if (!doc) return;
             
             const pdfBlob = doc.output('blob');
-            // Adding lastModified is crucial for some Android apps (like Gmail) to accept the file intent
             const file = new File([pdfBlob], filename, { type: 'application/pdf', lastModified: Date.now() });
             
             const shareData = {
                 files: [file],
-                title: 'Holiday Card',
-                text: `Here is a holiday card for you, ${recipient}!`,
+                title: title,
+                text: bodyText,
             };
 
-            // STRICT check for file sharing support
-            if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
-                await navigator.share(shareData);
+            // 2. Attempt Native Share
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                try {
+                     await navigator.share(shareData);
+                } catch (shareError: any) {
+                    // If user cancels, we just stop. If it's a real error, we throw to fallback.
+                    if (shareError.name !== 'AbortError') throw shareError;
+                }
             } else {
-                throw new Error("Web Share API not supported for files on this platform.");
+                throw new Error("Web Share API not supported for files");
             }
+
         } catch (e: any) {
-            // Ignore if user simply cancelled the share dialog
-            if (e.name !== 'AbortError') {
-                console.warn("Share failed, falling back to download:", e);
-                alert("Sharing isn't fully supported on this device/browser. Downloading the PDF instead!");
-                // Fallback: Download the file so the user doesn't lose it
-                if (doc) doc.save(filename);
+            console.warn("Share failed or not supported, falling back to download+mailto:", e);
+            
+            // 3. Fallback: Download & Prompt Email
+            if (doc) {
+                // Save the file so the user has it locally
+                doc.save(filename);
+                
+                // Wait briefly for download to initiate
+                setTimeout(() => {
+                    const subject = encodeURIComponent(title);
+                    // Updated body to instruct user to attach the file
+                    const fallbackBody = encodeURIComponent(`Hi ${recipient},\n\nI created a holiday card for you!\n\n(I have downloaded the card as "${filename}" to my device. Please see the attached PDF.)\n\nWarmly,\n${sender}`);
+                    const mailto = `mailto:?subject=${subject}&body=${fallbackBody}`;
+                    
+                    if (confirm(`Sharing didn't work directly, so I downloaded "${filename}" to your device.\n\nWould you like to open your email app now? (You'll need to attach the downloaded file manually)`)) {
+                        window.location.href = mailto;
+                    }
+                }, 800);
+            } else {
+                alert("Could not generate PDF.");
             }
         } finally {
             setGeneratingPdf(false);
