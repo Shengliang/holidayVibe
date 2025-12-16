@@ -214,16 +214,32 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
         updateMemory({ userImages: currentImages.filter((_, i) => i !== index) });
     };
 
-    const toggleConnection = async () => {
+    const toggleConnection = async (resetContext: boolean = false) => {
         if (connected) {
             await handleDisconnect();
         } else {
             setLeftTab('chat'); // Switch to chat tab automatically
+            
+            // Logic to Reset Context if requested
+            let currentContextStr = contextInput;
+            
+            if (resetContext) {
+                // Clear State
+                setContextInput(""); 
+                setHistory([]);
+                updateMemory({ conversationContext: "" });
+                currentTurnAccumulator.current = { user: '', elf: '' };
+                setCurrentTurn({ user: '', elf: '' });
+                // Use empty context for this connection
+                currentContextStr = "";
+            }
+
             agentRef.current = new HolidayLiveAgent();
             
-            // Reset accumulator
-            currentTurnAccumulator.current = { user: '', elf: '' };
-            setCurrentTurn({ user: '', elf: '' });
+            // Reset accumulator for new session
+            if (resetContext) {
+                 currentTurnAccumulator.current = { user: '', elf: '' };
+            }
 
             agentRef.current.onTranscriptUpdate = (input, output, turnComplete) => {
                 const acc = currentTurnAccumulator.current;
@@ -265,11 +281,12 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
             };
 
             try {
+                // Build system instruction context
                 const initial = `
                     Current Form Data:
                     - Recipient: ${recipient}
                     - Sender: ${sender}
-                    - Theme/Context: ${contextInput}
+                    - Theme/Context: ${currentContextStr}
                     - Message Draft: ${memory.cardMessage || "(Empty)"}
                     Use this information to guide the conversation.
                 `.trim();
@@ -695,20 +712,11 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
                 {/* Tab Content Wrapper */}
                 <div className="flex-1 relative flex flex-col min-h-0 bg-slate-900/20">
                     
-                    {/* SETTINGS VIEW - Standard Block Flow, Hidden if not active */}
+                    {/* SETTINGS VIEW */}
                     <div className={`flex-1 overflow-y-auto custom-scrollbar p-4 flex flex-col gap-4 ${leftTab === 'settings' ? 'flex' : 'hidden'}`}>
-                        {/* ... Settings content ... */}
-                        
-                        {/* Clear Defaults Header */}
+                        {/* Header Title Only */}
                         <div className="flex justify-between items-center mb-2">
                              <h3 className="text-slate-400 text-xs font-bold uppercase tracking-wider">Card Details</h3>
-                             <button 
-                                onClick={handleClearDefaults}
-                                className="text-[10px] bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 px-3 py-1 rounded-full transition-colors flex items-center gap-1"
-                             >
-                                <span className="material-symbols-outlined text-sm">restart_alt</span>
-                                Start Fresh
-                             </button>
                         </div>
 
                         {/* People */}
@@ -830,6 +838,33 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
                                  </div>
                              )}
                         </div>
+
+                        {/* Settings Footer Actions */}
+                        <div className="flex items-center gap-3 pt-4 border-t border-white/5 mt-2 mb-4">
+                             <button 
+                                onClick={handleClearDefaults}
+                                className="flex-1 py-3 rounded-xl font-bold transition-all text-xs bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20"
+                             >
+                                <div className="flex items-center justify-center gap-2">
+                                    <span className="material-symbols-outlined text-lg">delete_sweep</span>
+                                    Reset Form
+                                </div>
+                             </button>
+                             <button 
+                                onClick={generateAssets}
+                                disabled={loading}
+                                className={`flex-[2] py-3 rounded-xl font-bold transition-all text-xs flex items-center justify-center gap-2 shadow-lg ${
+                                    loading 
+                                        ? 'bg-slate-700 text-slate-400 cursor-wait' 
+                                        : 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-black shadow-amber-900/30'
+                                }`}
+                             >
+                                <span className={`material-symbols-outlined text-lg ${loading ? 'animate-spin' : ''}`}>
+                                    {loading ? 'refresh' : 'auto_fix_high'}
+                                </span>
+                                {loading ? 'Creating...' : 'Finish & Create Card'}
+                             </button>
+                        </div>
                     </div>
 
                     {/* CHAT VIEW - Standard Block Flow, Hidden if not active */}
@@ -839,7 +874,7 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
                                 <div className="text-center mt-12 space-y-4 opacity-50">
                                     <span className="material-symbols-outlined text-6xl text-slate-600">mic</span>
                                     <p className="text-slate-400 text-xs px-6">
-                                        Tap the mic below to brainstorm ideas with our AI Elf.
+                                        Tap below to start brainstorming.
                                     </p>
                                 </div>
                             )}
@@ -867,31 +902,39 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
                             )}
                          </div>
 
-                         <div className="p-4 bg-slate-900/80 border-t border-white/5 flex items-center justify-center gap-4 shrink-0">
-                             <button 
-                                onClick={toggleConnection}
-                                className={`w-14 h-14 rounded-full flex items-center justify-center transition-all duration-300 border-2 ${connected ? 'bg-red-500 border-red-400 hover:bg-red-600 shadow-[0_0_20px_rgba(239,68,68,0.4)]' : 'bg-slate-700 border-slate-600 hover:bg-slate-600'}`}
-                                title={connected ? "Stop Chat" : "Start Voice Chat"}
-                            >
-                                <span className="material-symbols-outlined text-2xl text-white">
-                                    {connected ? 'mic_off' : 'mic'}
-                                </span>
-                            </button>
-                            
-                            <button 
-                                onClick={generateAssets}
-                                disabled={loading}
-                                className={`h-12 px-6 rounded-full font-bold transition-all text-sm flex items-center gap-2 shadow-lg ${
-                                    loading 
-                                        ? 'bg-slate-700 text-slate-400 cursor-wait' 
-                                        : 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-black shadow-amber-900/30'
-                                }`}
-                            >
-                                <span className={`material-symbols-outlined text-xl ${loading ? 'animate-spin' : ''}`}>
-                                    {loading ? 'refresh' : 'auto_fix_high'}
-                                </span>
-                                {loading ? 'Creating...' : 'Create Card'}
-                            </button>
+                         <div className="p-4 bg-slate-900/80 border-t border-white/5 flex flex-col items-center justify-center gap-4 shrink-0">
+                             {connected ? (
+                                <button 
+                                    onClick={() => toggleConnection(false)}
+                                    className="w-full max-w-xs py-4 rounded-full flex items-center justify-center transition-all duration-300 border-2 bg-red-500 border-red-400 hover:bg-red-600 shadow-[0_0_20px_rgba(239,68,68,0.4)]"
+                                >
+                                    <span className="material-symbols-outlined text-2xl text-white mr-2">mic_off</span>
+                                    <span className="text-white font-bold">Stop Chat</span>
+                                </button>
+                             ) : (
+                                <div className="grid grid-cols-2 gap-4 w-full">
+                                    <button 
+                                        onClick={() => toggleConnection(false)}
+                                        className="py-3 rounded-xl bg-slate-700 border border-slate-600 hover:bg-slate-600 flex items-center justify-center gap-2 transition-all"
+                                    >
+                                        <span className="material-symbols-outlined text-green-400">resume</span>
+                                        <div className="text-left">
+                                            <p className="text-xs font-bold text-white">Continue Chat</p>
+                                            <p className="text-[9px] text-slate-400">Keep Context</p>
+                                        </div>
+                                    </button>
+                                    <button 
+                                        onClick={() => toggleConnection(true)}
+                                        className="py-3 rounded-xl bg-slate-700 border border-slate-600 hover:bg-slate-600 flex items-center justify-center gap-2 transition-all"
+                                    >
+                                        <span className="material-symbols-outlined text-amber-400">auto_delete</span>
+                                        <div className="text-left">
+                                            <p className="text-xs font-bold text-white">Start Fresh</p>
+                                            <p className="text-[9px] text-slate-400">Clear Context</p>
+                                        </div>
+                                    </button>
+                                </div>
+                             )}
                          </div>
                     </div>
 
