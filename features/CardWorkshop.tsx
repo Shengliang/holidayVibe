@@ -430,12 +430,35 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
         }
     };
 
+    const handleEmailAction = async () => {
+        setGeneratingPdf(true);
+        const filename = getSafeFilename();
+        const title = `Holiday Card for ${recipient}`;
+        
+        try {
+            const doc = await createPDFDoc();
+            if (doc) {
+                // 1. Force Download
+                doc.save(filename);
+
+                // 2. Open Mail Client
+                setTimeout(() => {
+                    const fallbackBody = encodeURIComponent(`Hi ${recipient},\n\nI created a holiday card for you!\n\n(I have downloaded the card as "${filename}" to my device. Please see the attached PDF.)\n\nWarmly,\n${sender}`);
+                    const mailto = `mailto:?subject=${encodeURIComponent(title)}&body=${fallbackBody}`;
+                    window.location.href = mailto;
+                }, 1000);
+            }
+        } catch(e) {
+            alert("Failed to generate for email.");
+        } finally {
+            setGeneratingPdf(false);
+        }
+    };
+
     const sharePDF = async () => {
         setGeneratingPdf(true);
         let doc: jsPDF | null = null;
         const filename = getSafeFilename();
-
-        // 1. Prepare Title and Body for Email
         const title = `Holiday Card for ${recipient}`;
         const bodyText = `Hi ${recipient},\n\nI created a personalized holiday card for you! (See attached)\n\nWarmly,\n${sender}`;
 
@@ -452,40 +475,21 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
                 text: bodyText,
             };
 
-            // 2. Attempt Native Share
+            // Attempt Native Share
             if (navigator.canShare && navigator.canShare({ files: [file] })) {
                 try {
                      await navigator.share(shareData);
                 } catch (shareError: any) {
-                    // If user cancels, we just stop. If it's a real error, we throw to fallback.
                     if (shareError.name !== 'AbortError') throw shareError;
                 }
             } else {
-                throw new Error("Web Share API not supported for files");
+                // Fallback to email logic if share not supported
+                handleEmailAction();
             }
 
         } catch (e: any) {
-            console.warn("Share failed or not supported, falling back to download+mailto:", e);
-            
-            // 3. Fallback: Download & Prompt Email
-            if (doc) {
-                // Save the file so the user has it locally
-                doc.save(filename);
-                
-                // Wait briefly for download to initiate
-                setTimeout(() => {
-                    const subject = encodeURIComponent(title);
-                    // Updated body to instruct user to attach the file
-                    const fallbackBody = encodeURIComponent(`Hi ${recipient},\n\nI created a holiday card for you!\n\n(I have downloaded the card as "${filename}" to my device. Please see the attached PDF.)\n\nWarmly,\n${sender}`);
-                    const mailto = `mailto:?subject=${subject}&body=${fallbackBody}`;
-                    
-                    if (confirm(`Sharing didn't work directly, so I downloaded "${filename}" to your device.\n\nWould you like to open your email app now? (You'll need to attach the downloaded file manually)`)) {
-                        window.location.href = mailto;
-                    }
-                }, 800);
-            } else {
-                alert("Could not generate PDF.");
-            }
+            console.warn("Share failed, falling back to download+mailto");
+            handleEmailAction();
         } finally {
             setGeneratingPdf(false);
         }
@@ -626,7 +630,7 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
     const totalPages = getPagesList().length;
 
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:h-full lg:overflow-hidden pb-12">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:h-full lg:overflow-hidden pb-32 lg:pb-12">
             {/* Left Panel: Tabs Container */}
             <div className="lg:col-span-1 flex flex-col bg-slate-900/40 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden relative h-[500px] lg:h-auto">
                 
@@ -895,19 +899,29 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
                             <button 
                                 onClick={sharePDF}
                                 disabled={generatingPdf}
-                                className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-bold transition-all ${generatingPdf ? 'bg-slate-800 text-slate-500' : 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg'}`}
-                                title="Share PDF"
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold transition-all ${generatingPdf ? 'bg-slate-800 text-slate-500' : 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg'}`}
+                                title="Share"
                             >
                                 <span className="material-symbols-outlined text-sm">share</span>
-                                Share
+                                <span className="hidden sm:inline">Share</span>
+                            </button>
+                            <button 
+                                onClick={handleEmailAction}
+                                disabled={generatingPdf}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold transition-all ${generatingPdf ? 'bg-slate-800 text-slate-500' : 'bg-purple-600 hover:bg-purple-500 text-white shadow-lg'}`}
+                                title="Email"
+                            >
+                                <span className="material-symbols-outlined text-sm">mail</span>
+                                <span className="hidden sm:inline">Email</span>
                             </button>
                             <button 
                                 onClick={downloadPDF}
                                 disabled={generatingPdf}
-                                className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-bold transition-all ${generatingPdf ? 'bg-slate-800 text-slate-500' : 'bg-green-600 hover:bg-green-500 text-white shadow-lg'}`}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold transition-all ${generatingPdf ? 'bg-slate-800 text-slate-500' : 'bg-green-600 hover:bg-green-500 text-white shadow-lg'}`}
+                                title="Download"
                             >
                                 <span className="material-symbols-outlined text-sm">{generatingPdf ? 'hourglass_empty' : 'download'}</span>
-                                {generatingPdf ? 'PDF...' : 'Download'}
+                                <span className="hidden sm:inline">{generatingPdf ? '...' : 'Dl'}</span>
                             </button>
                         </div>
                     )}

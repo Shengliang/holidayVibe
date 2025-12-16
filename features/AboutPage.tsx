@@ -45,6 +45,7 @@ A festive, interactive workshop where users create personalized holiday cards us
     -   **Right Panel (Preview):**
         -   Visualizes the card pages (Cover, Letter, Photo Collage, Gift/QR Code, Back).
         -   Uses \`html2canvas\` and \`jspdf\` to download the card as a PDF.
+        -   **Actions:** Share, Email (Download + Mailto fallback), and Download buttons.
     -   **State Management:** Syncs local form state with \`AgentMemory\`.
 
 **Privacy & Security Considerations:**

@@ -116,16 +116,16 @@ const App: React.FC = () => {
            )}
          </main>
          
-         {view === 'about' && (
-             <footer className="mt-4 text-center text-slate-500 text-xs flex flex-col items-center gap-3 pb-4">
-                <p>Gemini API Demo | Holiday 2025</p>
+         <footer className="mt-4 text-center text-slate-500 text-xs flex flex-col items-center gap-2 pb-4 shrink-0">
+            <p>Gemini API Demo | Holiday 2025 | v1.2.0</p>
+            {view === 'about' && (
                 <div className="flex items-center gap-6">
                     <a href="https://github.com/Shengliang/holidayVibe" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 hover:text-white">
                         <span className="material-symbols-outlined text-sm">code</span> Source Code
                     </a>
                 </div>
-             </footer>
-         )}
+            )}
+         </footer>
       </div>
     </div>
   );
