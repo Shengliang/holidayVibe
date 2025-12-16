@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 
 const AboutPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
@@ -22,35 +21,38 @@ A festive, interactive workshop where users create personalized holiday cards us
 
 1.  **App.tsx (Entry Point):**
     -   Manages global state (View switching: 'workshop' | 'about').
-    -   Initializes default 'AgentMemory' (recipient, sender, date, message, images).
+    -   Initializes default 'AgentMemory'.
     -   Renders a background snowfall effect.
-    -   Displays a header with "Create Card" button.
+    -   **Mobile Layout:** Uses a flex-col layout that allows body scrolling on mobile (to avoid nested scroll issues) but remains fixed height on desktop.
+    -   Displays Version (v1.2.0) in the footer.
 
 2.  **types.ts (Data Models):**
-    -   \`AgentMemory\`: Stores user inputs (recipientName, senderName, cardMessage, giftUrl, etc.) and generated assets (generatedCardUrl, generatedBackgroundUrl).
+    -   \`AgentMemory\`: Stores user inputs (recipientName, senderName, cardMessage, giftUrl, etc.) and generated assets.
 
 3.  **services/geminiService.ts (AI Layer):**
-    -   \`generateHolidayVibeImage\`: Uses 'gemini-2.5-flash-image' to create cover art based on context.
-    -   \`generateHolidayBackground\`: Uses 'gemini-2.5-flash-image' to create subtle stationery patterns.
-    -   \`generateCardText\`: Uses 'gemini-2.5-flash' to write heartwarming messages.
-    -   \`HolidayLiveAgent\`: A class managing the 'gemini-2.5-flash-native-audio-preview-09-2025' Live API connection.
-        -   Handles WebSockets, AudioContext for PCM streaming (input/output).
-        -   Defines a tool \`generate_card\` that the model calls when the user is done brainstorming.
+    -   \`generateHolidayVibeImage\`: Uses 'gemini-2.5-flash-image' to create cover art.
+    -   \`generateHolidayBackground\`: Uses 'gemini-2.5-flash-image' to create stationery patterns.
+    -   \`generateCardText\`: Uses 'gemini-2.5-flash' to write messages.
+    -   \`HolidayLiveAgent\`: Manages 'gemini-2.5-flash-native-audio-preview-09-2025' Live API connection (WebSockets, PCM Audio).
 
 4.  **features/CardWorkshop.tsx (Main UI):**
-    -   **Layout:** Split screen. Left side = Controls/Chat. Right side = Live Card Preview.
+    -   **Layout:** Split screen on Desktop. Vertical stack with heavy bottom padding on Mobile.
     -   **Left Panel (Tabs):**
         -   *Settings:* Inputs for Recipient, Sender, Date, Context Theme, Image Uploads, and **Gift Inclusion** (URL or Code).
-        -   *Live Chat:* A chat interface showing the transcription history with the AI Elf. Includes a big Microphone toggle button.
+        -   *Live Chat:* A chat interface showing the transcription history with the AI Elf.
     -   **Right Panel (Preview):**
         -   Visualizes the card pages (Cover, Letter, Photo Collage, Gift/QR Code, Back).
-        -   Uses \`html2canvas\` and \`jspdf\` to download the card as a PDF.
-        -   **Actions:** Share, Email (Download + Mailto fallback), and Download buttons.
+    -   **Action Bar (Desktop & Mobile):**
+        -   **Desktop:** Buttons located inside the Right Panel preview area.
+        -   **Mobile:** A **Sticky Footer** (\`fixed bottom-0\`) containing Share, Email, and Download buttons so they are always accessible.
+    -   **Export Logic:**
+        -   **PDF Generation:** Uses \`html2canvas\` + \`jspdf\`.
+        -   **Email Workflow:** 1. Force Download PDF. 2. Show \`confirm()\` alert instructing user to attach the file manually. 3. Open \`mailto:\` link.
     -   **State Management:** Syncs local form state with \`AgentMemory\`.
 
 **Privacy & Security Considerations:**
--   **Client-Side Only:** No backend database. All gift codes/links are stored in React state and wiped on refresh.
--   **API Key:** Uses \`process.env.API_KEY\` safely injected by the environment.
+-   **Client-Side Only:** No backend database. Data is wiped on refresh.
+-   **API Key:** Uses \`process.env.API_KEY\`.
 
 **Visual Style:**
 -   Dark mode default (Slate 900).
