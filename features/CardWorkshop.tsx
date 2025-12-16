@@ -441,12 +441,21 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
                 // 1. Force Download
                 doc.save(filename);
 
-                // 2. Open Mail Client
-                setTimeout(() => {
-                    const fallbackBody = encodeURIComponent(`Hi ${recipient},\n\nI created a holiday card for you!\n\n(I have downloaded the card as "${filename}" to my device. Please see the attached PDF.)\n\nWarmly,\n${sender}`);
-                    const mailto = `mailto:?subject=${encodeURIComponent(title)}&body=${fallbackBody}`;
-                    window.location.href = mailto;
-                }, 1000);
+                // 2. Alert the user about manual attachment
+                const confirmed = confirm(
+                    `Step 1 Complete: PDF saved as "${filename}".\n\n` +
+                    `Step 2: We will now open your email app.\n\n` +
+                    `IMPORTANT: You must manually ATTACH the file "${filename}" to the email.\n\n` +
+                    `Open Email App now?`
+                );
+
+                if (confirmed) {
+                    setTimeout(() => {
+                        const fallbackBody = encodeURIComponent(`Hi ${recipient},\n\nI created a holiday card for you!\n\n(I have downloaded the card as "${filename}" to my device. Please see the attached PDF.)\n\nWarmly,\n${sender}`);
+                        const mailto = `mailto:?subject=${encodeURIComponent(title)}&body=${fallbackBody}`;
+                        window.location.href = mailto;
+                    }, 500);
+                }
             }
         } catch(e) {
             alert("Failed to generate for email.");
@@ -629,6 +638,36 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
     const activePageType = getPagesList()[activePage];
     const totalPages = getPagesList().length;
 
+    // Sticky Action Footer for Mobile
+    const MobileActionFooter = () => (
+        <div className="fixed bottom-0 left-0 right-0 bg-slate-900/90 backdrop-blur-lg border-t border-white/10 p-4 flex items-center justify-between z-[100] lg:hidden safe-pb">
+            <div className="flex items-center gap-2">
+                 <button onClick={() => setActivePage(Math.max(0, activePage - 1))} className="w-8 h-8 bg-slate-800 rounded-full flex items-center justify-center text-slate-300">
+                    <span className="material-symbols-outlined text-sm">chevron_left</span>
+                 </button>
+                 <span className="text-[10px] font-bold text-slate-400 uppercase w-12 text-center">
+                    Pg {activePage + 1}/{totalPages}
+                 </span>
+                 <button onClick={() => setActivePage(Math.min(totalPages - 1, activePage + 1))} className="w-8 h-8 bg-slate-800 rounded-full flex items-center justify-center text-slate-300">
+                    <span className="material-symbols-outlined text-sm">chevron_right</span>
+                 </button>
+            </div>
+            {memory.generatedCardUrl && (
+                <div className="flex items-center gap-2">
+                    <button onClick={sharePDF} className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white shadow-lg">
+                        <span className="material-symbols-outlined text-lg">share</span>
+                    </button>
+                    <button onClick={handleEmailAction} className="w-10 h-10 bg-purple-600 rounded-full flex items-center justify-center text-white shadow-lg">
+                        <span className="material-symbols-outlined text-lg">mail</span>
+                    </button>
+                    <button onClick={downloadPDF} className="w-10 h-10 bg-green-600 rounded-full flex items-center justify-center text-white shadow-lg">
+                         <span className="material-symbols-outlined text-lg">download</span>
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+
     return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:h-full lg:overflow-hidden pb-32 lg:pb-12">
             {/* Left Panel: Tabs Container */}
@@ -658,6 +697,7 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
                     
                     {/* SETTINGS VIEW - Standard Block Flow, Hidden if not active */}
                     <div className={`flex-1 overflow-y-auto custom-scrollbar p-4 flex flex-col gap-4 ${leftTab === 'settings' ? 'flex' : 'hidden'}`}>
+                        {/* ... Settings content ... */}
                         
                         {/* Clear Defaults Header */}
                         <div className="flex justify-between items-center mb-2">
@@ -875,8 +915,8 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
                     </div>
                 </div>
 
-                {/* Pagination */}
-                <div className="mt-6 flex gap-4 bg-slate-900/60 p-2 rounded-full border border-white/10 backdrop-blur items-center z-10">
+                {/* Pagination & Actions for Desktop */}
+                <div className="mt-6 hidden lg:flex gap-4 bg-slate-900/60 p-2 rounded-full border border-white/10 backdrop-blur items-center z-10">
                     <button onClick={() => setActivePage(Math.max(0, activePage - 1))} className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-white/10 transition-colors">
                         <span className="material-symbols-outlined text-lg">chevron_left</span>
                     </button>
@@ -890,7 +930,7 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
                     </button>
                 </div>
                 
-                <div className="flex justify-between w-full max-w-[400px] mt-4 items-center px-2">
+                <div className="hidden lg:flex justify-between w-full max-w-[400px] mt-4 items-center px-2">
                     <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
                         {['Cover Page', 'Letter', 'Photos', 'Gift', 'Back'][activePage] || 'Page'}
                     </p>
@@ -927,6 +967,9 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
                     )}
                 </div>
             </div>
+
+            {/* Mobile Sticky Footer */}
+            <MobileActionFooter />
 
             {/* Hidden Container for PDF Rendering */}
             <div style={{ position: 'absolute', top: '-9999px', left: '-9999px', pointerEvents: 'none' }}>
