@@ -28,8 +28,10 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
     
     // Data State
     const [recipient, setRecipient] = useState(memory.recipientName || 'Family');
+    const [sender, setSender] = useState(memory.senderName || 'Me');
+    const [contextInput, setContextInput] = useState("");
     const [giftValue, setGiftValue] = useState(memory.giftUrl || '');
-    const [textInput, setTextInput] = useState("");
+    const [chatInput, setChatInput] = useState("");
     
     // Live Agent State
     const [connected, setConnected] = useState(false);
@@ -124,7 +126,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                 }
             };
 
-            // Handle Voice-Triggered Generation (Optional fallback, but button is primary)
+            // Handle Voice-Triggered Generation (Optional fallback)
             agentRef.current.onGenerateTrigger = () => {
                 console.log("Trigger received from Agent Tool Call");
                 handleDisconnect(); 
@@ -132,8 +134,9 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
             };
 
             try {
-                // Pass text input as initial context if user typed before connecting
-                await agentRef.current.connect(textInput);
+                // Pass text inputs as initial context if user typed before connecting
+                const initial = `${contextInput} ${chatInput}`;
+                await agentRef.current.connect(initial);
                 setConnected(true);
             } catch(e) {
                 alert("Connection failed. Check permissions.");
@@ -142,9 +145,9 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
     };
 
     const handleSendMessage = () => {
-        if (!textInput.trim()) return;
-        setHistory(prev => [...prev, { role: 'user', text: textInput.trim() }]);
-        setTextInput("");
+        if (!chatInput.trim()) return;
+        setHistory(prev => [...prev, { role: 'user', text: chatInput.trim() }]);
+        setChatInput("");
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -158,16 +161,17 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
         setLoading(true);
         setGenerationStatus("Creating magic...");
         try {
-            // Combine history for context
-            let context = history.map(h => `${h.role}: ${h.text}`).join('\n');
+            // Combine history and manual inputs for context
+            let context = `Theme/Requirements: ${contextInput}\n`;
+            context += history.map(h => `${h.role}: ${h.text}`).join('\n');
             
-            // Include current text input if user hasn't sent it yet
-            if (textInput.trim()) {
-                context += `\nuser: ${textInput.trim()}`;
+            // Include current chat input if user hasn't sent it yet
+            if (chatInput.trim()) {
+                context += `\nuser: ${chatInput.trim()}`;
             }
 
             // Fallback if empty
-            if (!context.trim()) {
+            if (!context.trim() && !contextInput.trim()) {
                  context = "A standard festive holiday card."; 
             }
 
@@ -175,7 +179,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
             
             setGenerationStatus("Writing your message...");
             // 1. Generate Text
-            const textData = await generateCardText(context, recipient);
+            const textData = await generateCardText(context, recipient, sender);
             updates.cardMessage = textData.text;
             
             setGenerationStatus("Painting the cover...");
@@ -189,6 +193,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
             updates.generatedBackgroundUrl = bgUrl;
 
             updates.recipientName = recipient;
+            updates.senderName = sender;
             updates.giftUrl = giftValue;
             
             updateMemory(updates);
@@ -214,7 +219,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
     const getActionButtonText = () => {
         if (loading) return "Creating Magic...";
         if (connected) return "Finish & Create Card";
-        if (history.length > 0 || textInput.trim()) return "Create Card from Chat";
+        if (history.length > 0 || contextInput.trim()) return "Create Card";
         return "Create Card";
     };
 
@@ -298,7 +303,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                             </div>
                             <div className="mt-8 pt-4 border-t border-red-200 text-right">
                                 <p className="font-christmas text-xl text-red-700">Warmly,</p>
-                                <p className="font-serif">The Elves</p>
+                                <p className="font-serif">{sender}</p>
                             </div>
                         </div>
                     </div>
@@ -351,12 +356,28 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                 <div className="bg-slate-900/50 p-4 rounded-xl border border-white/5">
                     <h3 className="font-christmas text-2xl text-red-300 mb-4">Card Settings</h3>
                     
+                    <div className="flex gap-2 mb-4">
+                        <div className="flex-1">
+                            <label className="block text-slate-400 text-xs uppercase font-bold mb-1">Recipient</label>
+                            <input value={recipient} onChange={e => setRecipient(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white focus:border-red-500 outline-none" placeholder="Name" />
+                        </div>
+                        <div className="flex-1">
+                            <label className="block text-slate-400 text-xs uppercase font-bold mb-1">From</label>
+                            <input value={sender} onChange={e => setSender(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white focus:border-red-500 outline-none" placeholder="Your Name" />
+                        </div>
+                    </div>
+
                     <div className="mb-4">
-                        <label className="block text-slate-400 text-xs uppercase font-bold mb-1">Recipient</label>
-                        <input value={recipient} onChange={e => setRecipient(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white focus:border-red-500 outline-none" />
+                        <label className="block text-slate-400 text-xs uppercase font-bold mb-1">Theme / Context (Optional)</label>
+                        <textarea 
+                            value={contextInput} 
+                            onChange={e => setContextInput(e.target.value)} 
+                            className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white focus:border-red-500 outline-none text-sm h-20 resize-none" 
+                            placeholder="e.g. A cyberpunk christmas with neon lights..." 
+                        />
                     </div>
                     
-                    <div className="mb-2">
+                    <div className="mb-2 pt-4 border-t border-white/5">
                          <div className="flex gap-2 mb-2">
                              <button onClick={() => setGiftType('URL')} className={`text-xs px-2 py-1 rounded ${giftType === 'URL' ? 'bg-red-500 text-white' : 'bg-slate-700 text-slate-400'}`}>Web Link</button>
                              <button onClick={() => setGiftType('CODE')} className={`text-xs px-2 py-1 rounded ${giftType === 'CODE' ? 'bg-red-500 text-white' : 'bg-slate-700 text-slate-400'}`}>Redeem Code</button>
@@ -402,10 +423,9 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                     <div className="flex-1 flex flex-col relative">
                         {/* Chat History */}
                         <div className="flex-1 bg-black/20 rounded-lg p-3 overflow-y-auto mb-2 text-sm space-y-2 h-40 border border-white/5 scroll-smooth" ref={scrollRef}>
-                            {history.length === 0 && !currentTurn.user && !textInput && <p className="text-slate-600 italic text-center mt-8 text-xs">
-                                1. Type ideas (optional)<br/>
-                                2. Tap Mic to chat<br/>
-                                3. Click Create Card when ready
+                            {history.length === 0 && !currentTurn.user && !chatInput && <p className="text-slate-600 italic text-center mt-8 text-xs">
+                                Need inspiration? Chat with the Elf!<br/>
+                                Or fill the context above and create.
                             </p>}
                             {history.map((h, i) => (
                                 <p key={i} className={h.role === 'user' ? 'text-slate-300' : 'text-green-300'}>
@@ -422,15 +442,15 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                             <div className="flex-1 relative">
                                 <input 
                                     type="text"
-                                    value={textInput}
-                                    onChange={(e) => setTextInput(e.target.value)}
+                                    value={chatInput}
+                                    onChange={(e) => setChatInput(e.target.value)}
                                     onKeyDown={handleKeyDown}
-                                    placeholder="Add context..."
+                                    placeholder="Chat with the elf..."
                                     className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:border-red-500 outline-none text-sm pr-8"
                                 />
                                 <button 
                                     onClick={handleSendMessage}
-                                    disabled={!textInput.trim()}
+                                    disabled={!chatInput.trim()}
                                     className="absolute right-1 top-1 bottom-1 text-slate-400 hover:text-white disabled:opacity-30"
                                 >
                                     <span className="material-symbols-outlined text-sm">send</span>

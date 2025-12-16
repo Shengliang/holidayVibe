@@ -95,11 +95,11 @@ export const generateVeoVideo = async (prompt: string, imageBase64?: string, ima
     return `${videoUri}&key=${process.env.API_KEY}`;
 };
 
-export const generateCardText = async (context: string, recipient: string) => {
+export const generateCardText = async (context: string, recipient: string, sender: string) => {
   const ai = getAI();
   
   const prompt = `
-    Task: Write a short, heartwarming Christmas card message for ${recipient}.
+    Task: Write a short, heartwarming Christmas card message for ${recipient} from ${sender}.
     
     Context/Style Source:
     "${context}"
@@ -108,6 +108,7 @@ export const generateCardText = async (context: string, recipient: string) => {
     - If the source is a conversation, extract the user's intent and preferred tone.
     - Keep it under 60 words.
     - Be creative and match the requested vibe.
+    - Do NOT include the "Dear X" or "Warmly Y" parts, just the body text.
   `;
 
   const response = await ai.models.generateContent({

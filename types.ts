@@ -1,6 +1,7 @@
 
 export interface AgentMemory {
   recipientName: string;
+  senderName?: string;
   generatedCardUrl: string | null;
   generatedBackgroundUrl?: string | null;
   cardMessage: string | null;
