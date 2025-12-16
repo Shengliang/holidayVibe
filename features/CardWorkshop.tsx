@@ -55,9 +55,14 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
     const [connected, setConnected] = useState(false);
     const [history, setHistory] = useState<{role: 'user' | 'elf', text: string}[]>([]);
     const [currentTurn, setCurrentTurn] = useState<{user: string, elf: string}>({ user: '', elf: '' });
+    
+    // Refs for Agent logic
     const agentRef = useRef<HolidayLiveAgent | null>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const pdfContainerRef = useRef<HTMLDivElement>(null);
+    
+    // Accumulator Ref to handle high-frequency WebSocket updates safely
+    const currentTurnAccumulator = useRef<{user: string, elf: string}>({ user: '', elf: '' });
 
     // Notify parent of status changes
     useEffect(() => {
@@ -212,16 +217,31 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
         } else {
             setLeftTab('chat'); // Switch to chat tab automatically
             agentRef.current = new HolidayLiveAgent();
+            
+            // Reset accumulator
+            currentTurnAccumulator.current = { user: '', elf: '' };
+            setCurrentTurn({ user: '', elf: '' });
+
             agentRef.current.onTranscriptUpdate = (input, output, turnComplete) => {
-                setCurrentTurn(prev => ({ user: prev.user + input, elf: prev.elf + output }));
+                const acc = currentTurnAccumulator.current;
+                acc.user += input;
+                acc.elf += output;
+                
+                // Force update UI with current accumulated text
+                setCurrentTurn({ user: acc.user, elf: acc.elf });
+
                 if (turnComplete) {
-                    setCurrentTurn(prev => {
+                    setHistory(prev => {
                         const newItems: {role: 'user' | 'elf', text: string}[] = [];
-                        if (prev.user.trim()) newItems.push({ role: 'user', text: prev.user.trim() });
-                        if (prev.elf.trim()) newItems.push({ role: 'elf', text: prev.elf.trim() });
-                        setHistory(h => [...h, ...newItems]);
-                        return { user: '', elf: '' };
+                        if (acc.user.trim()) newItems.push({ role: 'user', text: acc.user.trim() });
+                        if (acc.elf.trim()) newItems.push({ role: 'elf', text: acc.elf.trim() });
+                        return [...prev, ...newItems];
                     });
+                    
+                    // Reset accumulator and UI for next turn
+                    acc.user = '';
+                    acc.elf = '';
+                    setCurrentTurn({ user: '', elf: '' });
                 }
             };
 
@@ -345,29 +365,60 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
         return pages;
     };
 
+    const createPDFDoc = async () => {
+        if (!pdfContainerRef.current) return null;
+        const doc = new jsPDF({ orientation: 'portrait', unit: 'px', format: [400, 560] });
+        const pages = pdfContainerRef.current.children;
+        for (let i = 0; i < pages.length; i++) {
+            const pageElement = pages[i] as HTMLElement;
+            const canvas = await html2canvas(pageElement, {
+                scale: 2,
+                useCORS: true,
+                allowTaint: true,
+                backgroundColor: null,
+                logging: false
+            });
+            const imgData = canvas.toDataURL('image/jpeg', 0.95);
+            if (i > 0) doc.addPage();
+            doc.addImage(imgData, 'JPEG', 0, 0, 400, 560);
+        }
+        return doc;
+    };
+
     const downloadPDF = async () => {
-        if (!pdfContainerRef.current) return;
         setGeneratingPdf(true);
         try {
-            const doc = new jsPDF({ orientation: 'portrait', unit: 'px', format: [400, 560] });
-            const pages = pdfContainerRef.current.children;
-            for (let i = 0; i < pages.length; i++) {
-                const pageElement = pages[i] as HTMLElement;
-                const canvas = await html2canvas(pageElement, {
-                    scale: 2,
-                    useCORS: true,
-                    allowTaint: true,
-                    backgroundColor: null,
-                    logging: false
-                });
-                const imgData = canvas.toDataURL('image/jpeg', 0.95);
-                if (i > 0) doc.addPage();
-                doc.addImage(imgData, 'JPEG', 0, 0, 400, 560);
-            }
-            doc.save(`holiday-card-${recipient}.pdf`);
+            const doc = await createPDFDoc();
+            if (doc) doc.save(`holiday-card-${recipient}.pdf`);
         } catch (e) {
             console.error("PDF Generation failed:", e);
             alert("Could not generate PDF.");
+        } finally {
+            setGeneratingPdf(false);
+        }
+    };
+
+    const sharePDF = async () => {
+        setGeneratingPdf(true);
+        try {
+            const doc = await createPDFDoc();
+            if (!doc) return;
+            
+            const pdfBlob = doc.output('blob');
+            const file = new File([pdfBlob], `holiday-card-${recipient}.pdf`, { type: 'application/pdf' });
+            
+            if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+                await navigator.share({
+                    files: [file],
+                    title: 'Holiday Card',
+                    text: `Here is a holiday card for you, ${recipient}!`,
+                });
+            } else {
+                alert("Sharing files is not supported on this browser/device. Please use Download.");
+            }
+        } catch (e) {
+            console.error("PDF Share failed:", e);
+            alert("Could not share PDF. Try downloading instead.");
         } finally {
             setGeneratingPdf(false);
         }
@@ -705,14 +756,30 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
                             )}
                          </div>
 
-                         <div className="p-4 bg-slate-900/80 border-t border-white/5 flex justify-center shrink-0">
+                         <div className="p-4 bg-slate-900/80 border-t border-white/5 flex items-center justify-center gap-4 shrink-0">
                              <button 
                                 onClick={toggleConnection}
-                                className={`w-16 h-16 rounded-full flex items-center justify-center transition-all duration-300 ${connected ? 'bg-red-500 hover:bg-red-600 shadow-[0_0_30px_rgba(239,68,68,0.4)] scale-110' : 'bg-slate-700 hover:bg-slate-600'}`}
+                                className={`w-14 h-14 rounded-full flex items-center justify-center transition-all duration-300 border-2 ${connected ? 'bg-red-500 border-red-400 hover:bg-red-600 shadow-[0_0_20px_rgba(239,68,68,0.4)]' : 'bg-slate-700 border-slate-600 hover:bg-slate-600'}`}
+                                title={connected ? "Stop Chat" : "Start Voice Chat"}
                             >
-                                <span className="material-symbols-outlined text-3xl text-white">
+                                <span className="material-symbols-outlined text-2xl text-white">
                                     {connected ? 'mic_off' : 'mic'}
                                 </span>
+                            </button>
+                            
+                            <button 
+                                onClick={generateAssets}
+                                disabled={loading}
+                                className={`h-12 px-6 rounded-full font-bold transition-all text-sm flex items-center gap-2 shadow-lg ${
+                                    loading 
+                                        ? 'bg-slate-700 text-slate-400 cursor-wait' 
+                                        : 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-black shadow-amber-900/30'
+                                }`}
+                            >
+                                <span className={`material-symbols-outlined text-xl ${loading ? 'animate-spin' : ''}`}>
+                                    {loading ? 'refresh' : 'auto_fix_high'}
+                                </span>
+                                {loading ? 'Creating...' : 'Create Card'}
                             </button>
                          </div>
                     </div>
@@ -757,14 +824,25 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
                         {['Cover Page', 'Letter', 'Photos', 'Gift', 'Back'][activePage] || 'Page'}
                     </p>
                     {memory.generatedCardUrl && (
-                        <button 
-                            onClick={downloadPDF}
-                            disabled={generatingPdf}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-bold transition-all ${generatingPdf ? 'bg-slate-800 text-slate-500' : 'bg-green-600 hover:bg-green-500 text-white shadow-lg'}`}
-                        >
-                            <span className="material-symbols-outlined text-sm">{generatingPdf ? 'hourglass_empty' : 'download'}</span>
-                            {generatingPdf ? 'PDF...' : 'Download'}
-                        </button>
+                        <div className="flex items-center gap-2">
+                            <button 
+                                onClick={sharePDF}
+                                disabled={generatingPdf}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-bold transition-all ${generatingPdf ? 'bg-slate-800 text-slate-500' : 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg'}`}
+                                title="Share PDF"
+                            >
+                                <span className="material-symbols-outlined text-sm">share</span>
+                                Share
+                            </button>
+                            <button 
+                                onClick={downloadPDF}
+                                disabled={generatingPdf}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-bold transition-all ${generatingPdf ? 'bg-slate-800 text-slate-500' : 'bg-green-600 hover:bg-green-500 text-white shadow-lg'}`}
+                            >
+                                <span className="material-symbols-outlined text-sm">{generatingPdf ? 'hourglass_empty' : 'download'}</span>
+                                {generatingPdf ? 'PDF...' : 'Download'}
+                            </button>
+                        </div>
                     )}
                 </div>
             </div>
