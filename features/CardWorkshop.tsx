@@ -31,7 +31,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
     const [recipient, setRecipient] = useState(memory.recipientName || 'Family');
     const [sender, setSender] = useState(memory.senderName || 'Me');
     const [date, setDate] = useState(memory.date || new Date().toISOString().split('T')[0]);
-    const [contextInput, setContextInput] = useState("");
+    const [contextInput, setContextInput] = useState("Theme: Top trends in career changes and AI technology progress in 2025.\n\nLetter Focus: Encourage work-life balance and resilience. Inspire those looking for job changes, from new graduates to veterans with 20+ years of experience who may have recently lost their jobs.\n\nMessage: Never give up.");
     const [giftValue, setGiftValue] = useState(memory.giftUrl || '');
     
     // Album State

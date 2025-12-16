@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { AgentMemory } from './types';
 import CardWorkshop from './features/CardWorkshop';
@@ -31,9 +32,10 @@ const Snowfall = () => {
 
 const App: React.FC = () => {
   const [memory, setMemory] = useState<AgentMemory>({
-    recipientName: "Family",
+    recipientName: "My Network",
+    senderName: "Sheng-Liang Song",
     generatedCardUrl: null,
-    cardMessage: null,
+    cardMessage: "As we step into 2025, the landscape of career and AI is evolving rapidly. Whether you are a new graduate or a veteran with 20+ years of experience navigating recent changes, remember that resilience is key.\n\nPrioritize your work-life balance and never give up on your journey. The right opportunity is waiting for you.\n\nWishing you a year of growth and balance!",
     giftUrl: null,
     conversationContext: ""
   });
