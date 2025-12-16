@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { AgentMemory } from './types';
 import CardWorkshop from './features/CardWorkshop';
+import AboutPage from './features/AboutPage';
 
 // Simple Snowfall Effect Component
 const Snowfall = () => {
@@ -31,6 +32,7 @@ const Snowfall = () => {
 };
 
 const App: React.FC = () => {
+  const [view, setView] = useState<'workshop' | 'about'>('workshop');
   const [memory, setMemory] = useState<AgentMemory>({
     recipientName: "My Network",
     senderName: "Sheng-Liang Song",
@@ -49,7 +51,7 @@ const App: React.FC = () => {
       <Snowfall />
       <div className="relative z-10 container mx-auto px-4 py-8 max-w-6xl">
          <header className="flex justify-between items-center mb-8 border-b border-white/10 pb-4">
-           <div className="flex items-center gap-3">
+           <div className="flex items-center gap-3 cursor-pointer" onClick={() => setView('workshop')}>
                <span className="material-symbols-outlined text-4xl text-red-500">fireplace</span>
                <div>
                    <h1 className="text-3xl font-christmas text-red-100 drop-shadow-lg">
@@ -58,14 +60,48 @@ const App: React.FC = () => {
                    <p className="text-xs text-slate-400">Powered by Gemini 2.5 Live & Flash</p>
                </div>
            </div>
+           
+           {view === 'workshop' && (
+             <button 
+                onClick={() => setView('about')}
+                className="flex items-center gap-2 px-4 py-2 rounded-full bg-slate-800/50 hover:bg-slate-700 border border-white/10 transition-all text-sm text-slate-300 hover:text-white"
+             >
+                <span className="material-symbols-outlined text-lg">info</span>
+                <span className="hidden sm:inline">About Project</span>
+             </button>
+           )}
          </header>
          
          <main className="min-h-[600px] transition-all duration-300">
-           <CardWorkshop memory={memory} updateMemory={updateMemory} />
+           {view === 'workshop' ? (
+             <CardWorkshop memory={memory} updateMemory={updateMemory} />
+           ) : (
+             <AboutPage onBack={() => setView('workshop')} />
+           )}
          </main>
          
-         <footer className="mt-12 text-center text-slate-500 text-xs">
-           Gemini API Demo | Holiday 2024
+         <footer className="mt-12 text-center text-slate-500 text-xs flex flex-col items-center gap-3">
+            <p>Gemini API Demo | Holiday 2025</p>
+            <div className="flex items-center gap-6">
+                <a 
+                  href="https://github.com/Shengliang/holidayVibe" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 hover:text-white transition-colors"
+                >
+                    <span className="material-symbols-outlined text-sm">code</span>
+                    Source Code
+                </a>
+                <a 
+                  href="https://holiday-vibe-pipeline-600965458720.us-west1.run.app/" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 hover:text-white transition-colors"
+                >
+                    <span className="material-symbols-outlined text-sm">rocket_launch</span>
+                    Live Demo
+                </a>
+            </div>
          </footer>
       </div>
     </div>
