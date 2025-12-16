@@ -146,32 +146,46 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
         agentRef.current = null;
     };
 
-    const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = e.target.files;
-        if (files && files.length > 0) {
-            const file = files[0]; // Take one at a time via the button
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                const res = reader.result as string;
-                const matches = res.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
-                if (matches) {
-                    // Create image object to detect dimensions
-                    const imgObj = new Image();
-                    imgObj.onload = () => {
-                        const newImage = { 
-                            mime: matches[1], 
-                            data: matches[2],
-                            width: imgObj.width,
-                            height: imgObj.height
+        if (!files || files.length === 0) return;
+
+        const newImages: any[] = [];
+        
+        // Helper to read file as Promise
+        const readFile = (file: File): Promise<void> => {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    const res = reader.result as string;
+                    const matches = res.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
+                    if (matches) {
+                        const imgObj = new Image();
+                        imgObj.onload = () => {
+                            newImages.push({ 
+                                mime: matches[1], 
+                                data: matches[2],
+                                width: imgObj.width,
+                                height: imgObj.height
+                            });
+                            resolve();
                         };
-                        const currentImages = memory.userImages || [];
-                        updateMemory({ userImages: [...currentImages, newImage] });
-                    };
-                    imgObj.src = res;
-                }
-            };
-            reader.readAsDataURL(file);
-        }
+                        imgObj.src = res;
+                    } else {
+                        resolve();
+                    }
+                };
+                reader.readAsDataURL(file);
+            });
+        };
+
+        // Process all selected files
+        await Promise.all(Array.from(files).map(readFile));
+        
+        // Batch update memory
+        const currentImages = memory.userImages || [];
+        updateMemory({ userImages: [...currentImages, ...newImages] });
+        
         // Reset input
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
@@ -352,8 +366,16 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                     <div className="relative w-full h-full bg-slate-800 flex items-center justify-center overflow-hidden">
                         {memory.generatedCardUrl ? (
                             <>
-                                <img src={memory.generatedCardUrl} className="absolute inset-0 w-full h-full object-cover" alt="Cover" crossOrigin="anonymous" />
-                                <div className="absolute inset-0 bg-black/30"></div>
+                                <div 
+                                    className="absolute inset-0 w-full h-full z-0"
+                                    style={{
+                                        backgroundImage: `url(${memory.generatedCardUrl})`,
+                                        backgroundSize: 'cover',
+                                        backgroundPosition: 'center',
+                                        backgroundRepeat: 'no-repeat'
+                                    }}
+                                />
+                                <div className="absolute inset-0 bg-black/30 z-0"></div>
                                 <div className="relative z-10 text-center p-6 border-4 border-white/20 m-4 h-[90%] flex items-center justify-center">
                                     <h1 className="font-christmas text-5xl text-white drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)]">Merry Christmas</h1>
                                 </div>
@@ -514,7 +536,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                             >
                                 <span className="material-symbols-outlined">add</span>
                             </button>
-                            <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleImageUpload} />
+                            <input type="file" ref={fileInputRef} className="hidden" accept="image/*" multiple onChange={handleImageUpload} />
                         </div>
                         
                         {/* Google Photos Link Input */}
@@ -525,7 +547,9 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                                 className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-xs focus:border-red-500 outline-none" 
                                 placeholder="Google Photos / Album Link" 
                              />
-                             <p className="text-[10px] text-slate-500 mt-1">First photo used for AI Style. Link adds a QR code to Photos page.</p>
+                             <p className="text-[10px] text-slate-500 mt-1">
+                                Link generates a QR code for recipients. To print photos on the card, please <span className="text-slate-300 font-bold cursor-pointer hover:underline" onClick={() => fileInputRef.current?.click()}>upload them here</span> (multi-select supported).
+                             </p>
                         </div>
                     </div>
 
