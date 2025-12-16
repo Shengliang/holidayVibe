@@ -33,7 +33,6 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
     const [date, setDate] = useState(memory.date || new Date().toISOString().split('T')[0]);
     const [contextInput, setContextInput] = useState("");
     const [giftValue, setGiftValue] = useState(memory.giftUrl || '');
-    const [chatInput, setChatInput] = useState("");
     
     // Album State
     const [albumLink, setAlbumLink] = useState(memory.photoAlbumLink || '');
@@ -156,9 +155,19 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                 const res = reader.result as string;
                 const matches = res.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
                 if (matches) {
-                    const newImage = { mime: matches[1], data: matches[2] };
-                    const currentImages = memory.userImages || [];
-                    updateMemory({ userImages: [...currentImages, newImage] });
+                    // Create image object to detect dimensions
+                    const imgObj = new Image();
+                    imgObj.onload = () => {
+                        const newImage = { 
+                            mime: matches[1], 
+                            data: matches[2],
+                            width: imgObj.width,
+                            height: imgObj.height
+                        };
+                        const currentImages = memory.userImages || [];
+                        updateMemory({ userImages: [...currentImages, newImage] });
+                    };
+                    imgObj.src = res;
                 }
             };
             reader.readAsDataURL(file);
@@ -201,26 +210,13 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
             };
 
             try {
-                // Pass text inputs as initial context if user typed before connecting
-                const initial = `${contextInput} ${chatInput}`;
+                // Pass text inputs as initial context
+                const initial = `${contextInput}`;
                 await agentRef.current.connect(initial);
                 setConnected(true);
             } catch(e) {
                 alert("Connection failed. Check permissions.");
             }
-        }
-    };
-
-    const handleSendMessage = () => {
-        if (!chatInput.trim()) return;
-        setHistory(prev => [...prev, { role: 'user', text: chatInput.trim() }]);
-        setChatInput("");
-    };
-
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            handleSendMessage();
         }
     };
 
@@ -232,11 +228,6 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
             let context = `Theme/Requirements: ${contextInput}\n`;
             context += history.map(h => `${h.role}: ${h.text}`).join('\n');
             
-            // Include current chat input if user hasn't sent it yet
-            if (chatInput.trim()) {
-                context += `\nuser: ${chatInput.trim()}`;
-            }
-
             // Fallback if empty
             if (!context.trim() && !contextInput.trim()) {
                  context = "A standard festive holiday card."; 
@@ -399,14 +390,23 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                     <div className="w-full h-full text-slate-800 flex flex-col relative" style={bgStyle}>
                          <div className={`w-full h-full p-6 flex flex-col items-center justify-center ${overlayClass}`}>
                              <div className="grid grid-cols-2 gap-4 w-full h-full overflow-hidden content-center">
-                                {memory.userImages?.map((img, i) => (
-                                    <div key={i} className="bg-white p-2 shadow-lg transform hover:scale-105 transition-transform rotate-1 first:rotate-[-2deg]">
-                                        <img src={`data:${img.mime};base64,${img.data}`} className="w-full h-32 object-cover" alt="Memory" />
-                                    </div>
-                                ))}
+                                {memory.userImages?.map((img, i) => {
+                                    // Check aspect ratio if available
+                                    const isPortrait = (img.height || 0) > (img.width || 0);
+                                    
+                                    return (
+                                        <div key={i} className={`bg-white p-2 shadow-lg transform hover:scale-105 transition-transform ${i % 2 === 0 ? 'rotate-1' : '-rotate-1'} self-center justify-self-center`}>
+                                            <img 
+                                                src={`data:${img.mime};base64,${img.data}`} 
+                                                className={`block object-contain ${isPortrait ? 'h-[160px] w-auto' : 'w-full h-auto max-h-[120px]'}`} 
+                                                alt="Memory" 
+                                            />
+                                        </div>
+                                    );
+                                })}
                                 {/* Render QR Code card if album link exists */}
                                 {memory.photoAlbumLink && albumQrUrl && (
-                                    <div className="bg-white p-2 shadow-lg transform hover:scale-105 transition-transform -rotate-1 flex flex-col items-center justify-center">
+                                    <div className="bg-white p-2 shadow-lg transform hover:scale-105 transition-transform -rotate-1 flex flex-col items-center justify-center self-center justify-self-center h-[160px] w-full">
                                         <img src={albumQrUrl} className="w-24 h-24 mb-2" alt="Album QR" />
                                         <p className="text-[10px] text-center font-bold text-slate-600 uppercase leading-tight">Shared<br/>Photo Album</p>
                                     </div>
@@ -611,7 +611,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                     <div className="flex-1 flex flex-col relative">
                         {/* Chat History */}
                         <div className="flex-1 bg-black/20 rounded-lg p-3 overflow-y-auto mb-2 text-sm space-y-2 h-40 border border-white/5 scroll-smooth" ref={scrollRef}>
-                            {history.length === 0 && !currentTurn.user && !chatInput && <p className="text-slate-600 italic text-center mt-8 text-xs">
+                            {history.length === 0 && !currentTurn.user && <p className="text-slate-600 italic text-center mt-8 text-xs">
                                 Need inspiration? Chat with the Elf!<br/>
                                 Or fill the context above and create.
                             </p>}
@@ -625,32 +625,14 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                             {currentTurn.elf && <p className="text-green-300 opacity-60"><span className="font-bold text-xs opacity-50 block uppercase">ELF</span>{currentTurn.elf}</p>}
                         </div>
                         
-                        {/* Input Area */}
-                        <div className="flex gap-2">
-                            <div className="flex-1 relative">
-                                <input 
-                                    type="text"
-                                    value={chatInput}
-                                    onChange={(e) => setChatInput(e.target.value)}
-                                    onKeyDown={handleKeyDown}
-                                    placeholder="Chat with the elf..."
-                                    className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:border-red-500 outline-none text-sm pr-8"
-                                />
-                                <button 
-                                    onClick={handleSendMessage}
-                                    disabled={!chatInput.trim()}
-                                    className="absolute right-1 top-1 bottom-1 text-slate-400 hover:text-white disabled:opacity-30"
-                                >
-                                    <span className="material-symbols-outlined text-sm">send</span>
-                                </button>
-                            </div>
-                            
-                            <button 
+                        {/* Voice Controls Only */}
+                        <div className="flex justify-center mt-2">
+                             <button 
                                 onClick={toggleConnection}
-                                className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all ${connected ? 'bg-red-500 text-white animate-pulse' : 'bg-slate-700 text-slate-300 hover:bg-slate-600 hover:text-white'}`}
-                                title={connected ? "Stop Voice Chat" : "Start Voice Chat"}
+                                className={`flex items-center gap-2 px-6 py-3 rounded-full font-bold transition-all ${connected ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/30' : 'bg-slate-700 text-slate-300 hover:bg-slate-600 hover:text-white'}`}
                             >
                                 <span className="material-symbols-outlined">{connected ? 'mic_off' : 'mic'}</span>
+                                {connected ? 'End Chat' : 'Start Voice Chat'}
                             </button>
                         </div>
                     </div>

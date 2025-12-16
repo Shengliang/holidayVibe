@@ -8,7 +8,7 @@ export interface AgentMemory {
   cardMessage: string | null;
   giftUrl: string | null;
   conversationContext: string; // Stores the chat transcript or text prompt
-  userImages?: { data: string; mime: string }[]; // Reference photos
+  userImages?: { data: string; mime: string; width?: number; height?: number }[]; // Reference photos
   photoAlbumLink?: string; // Shared album link
 }
 
