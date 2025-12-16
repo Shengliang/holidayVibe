@@ -64,6 +64,9 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
     // Accumulator Ref to handle high-frequency WebSocket updates safely
     const currentTurnAccumulator = useRef<{user: string, elf: string}>({ user: '', elf: '' });
 
+    // Helper Ref to access the latest generateAssets function from within the stable agent callback
+    const generateAssetsRef = useRef<() => Promise<void>>(async () => {});
+
     // Notify parent of status changes
     useEffect(() => {
         onStatusChange({ loading, connected });
@@ -224,6 +227,7 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
 
             agentRef.current.onTranscriptUpdate = (input, output, turnComplete) => {
                 const acc = currentTurnAccumulator.current;
+                // Live API sends text chunks, accumulate them
                 acc.user += input;
                 acc.elf += output;
                 
@@ -231,12 +235,18 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
                 setCurrentTurn({ user: acc.user, elf: acc.elf });
 
                 if (turnComplete) {
-                    setHistory(prev => {
-                        const newItems: {role: 'user' | 'elf', text: string}[] = [];
-                        if (acc.user.trim()) newItems.push({ role: 'user', text: acc.user.trim() });
-                        if (acc.elf.trim()) newItems.push({ role: 'elf', text: acc.elf.trim() });
-                        return [...prev, ...newItems];
-                    });
+                    // Capture current state values before resetting
+                    const finalUser = acc.user.trim();
+                    const finalElf = acc.elf.trim();
+
+                    if (finalUser || finalElf) {
+                        setHistory(prev => {
+                            const newItems: {role: 'user' | 'elf', text: string}[] = [];
+                            if (finalUser) newItems.push({ role: 'user', text: finalUser });
+                            if (finalElf) newItems.push({ role: 'elf', text: finalElf });
+                            return [...prev, ...newItems];
+                        });
+                    }
                     
                     // Reset accumulator and UI for next turn
                     acc.user = '';
@@ -247,8 +257,11 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
 
             agentRef.current.onGenerateTrigger = () => {
                 console.log("Trigger received from Agent Tool Call");
-                handleDisconnect(); 
-                generateAssets(); 
+                // Call the latest generateAssets function via Ref to ensure we have latest history
+                if (generateAssetsRef.current) {
+                    handleDisconnect(); 
+                    generateAssetsRef.current();
+                }
             };
 
             try {
@@ -281,6 +294,7 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
         setCoverImageIndex(null);
         setQrCodeDataUrl(null);
         setAlbumQrUrl(null);
+        setHistory([]); // Explicitly clear history
         
         // Reset Global Memory (clears Preview)
         updateMemory({
@@ -307,8 +321,12 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
         setGenerationStatus("Creating magic...");
         try {
             let context = `Theme/Requirements: ${contextInput}\n`;
+            // Crucial: This function reads the latest 'history' from component state
+            // because generateAssets is recreated on every render and stored in generateAssetsRef
             context += history.map(h => `${h.role}: ${h.text}`).join('\n');
             
+            console.log("Generating with Context:", context); // Debug log
+
             if (!context.trim() && !contextInput.trim()) {
                  context = "A standard festive holiday card."; 
             }
@@ -350,6 +368,11 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
             setGenerationStatus("");
         }
     };
+
+    // Update the Ref on every render so the Agent callback always has the fresh function with fresh state closures
+    useEffect(() => {
+        generateAssetsRef.current = generateAssets;
+    });
 
     useImperativeHandle(ref, () => ({
         triggerGeneration: generateAssets
