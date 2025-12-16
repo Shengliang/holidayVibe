@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 
 const AboutPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
@@ -38,8 +39,8 @@ A festive, interactive workshop where users create personalized holiday cards us
 4.  **features/CardWorkshop.tsx (Main UI):**
     -   **Layout:** Split screen on Desktop. Vertical stack with heavy bottom padding on Mobile.
     -   **Left Panel (Tabs):**
-        -   *Settings:* Inputs for Recipient, Sender, Date, Context Theme, Image Uploads, and **Gift Inclusion** (URL or Code).
-        -   *Live Chat:* A chat interface showing the transcription history with the AI Elf.
+        -   *Settings:* Inputs for Recipient, Sender, Date, Context Theme, Image Uploads, and **Gift Inclusion** (URL or Code). Includes a footer action bar with **"Reset Form"** and **"Finish & Create Card"** buttons.
+        -   *Live Chat:* A chat interface showing transcription history. **Connection Options:** When disconnected, offers two distinct modes: **"Continue Chat"** (preserves context) and **"Start Fresh"** (wipes context/history).
     -   **Right Panel (Preview):**
         -   Visualizes the card pages (Cover, Letter, Photo Collage, Gift/QR Code, Back).
     -   **Action Bar (Desktop & Mobile):**
