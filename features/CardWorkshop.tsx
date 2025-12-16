@@ -1,21 +1,27 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
 import { AgentMemory } from '../types';
 import { generateCardText, generateHolidayVibeImage, generateHolidayBackground, HolidayLiveAgent } from '../services/geminiService';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 
+export interface WorkshopHandle {
+    triggerGeneration: () => Promise<void>;
+}
+
 interface Props {
     memory: AgentMemory;
     updateMemory: (m: Partial<AgentMemory>) => void;
+    onStatusChange: (status: { loading: boolean, connected: boolean }) => void;
 }
 
 type GiftType = 'URL' | 'CODE';
 type GiftProvider = 'APPLE' | 'GOOGLE' | 'AMAZON';
 
-const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
+const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, onStatusChange }, ref) => {
     // UI State
     const [activePage, setActivePage] = useState(0);
+    const [leftTab, setLeftTab] = useState<'settings' | 'chat'>('settings');
     const [loading, setLoading] = useState(false);
     const [generatingPdf, setGeneratingPdf] = useState(false);
     const [generationStatus, setGenerationStatus] = useState<string>("");
@@ -38,6 +44,9 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
     const [albumLink, setAlbumLink] = useState(memory.photoAlbumLink || '');
     const [albumQrUrl, setAlbumQrUrl] = useState<string | null>(null);
     
+    // Image Selection State (Index of the image to use as Cover Reference)
+    const [coverImageIndex, setCoverImageIndex] = useState<number | null>(null);
+
     // Upload State
     const fileInputRef = useRef<HTMLInputElement>(null);
     
@@ -48,6 +57,11 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
     const agentRef = useRef<HolidayLiveAgent | null>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const pdfContainerRef = useRef<HTMLDivElement>(null);
+
+    // Notify parent of status changes
+    useEffect(() => {
+        onStatusChange({ loading, connected });
+    }, [loading, connected, onStatusChange]);
 
     // Sync local state with memory on mount
     useEffect(() => {
@@ -69,7 +83,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
         if (scrollRef.current) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
         }
-    }, [history, currentTurn]);
+    }, [history, currentTurn, leftTab]);
 
     // Smart QR Logic (Gift)
     const getQrData = () => {
@@ -151,8 +165,6 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
         if (!files || files.length === 0) return;
 
         const newImages: any[] = [];
-        
-        // Helper to read file as Promise
         const readFile = (file: File): Promise<void> => {
             return new Promise((resolve) => {
                 const reader = new FileReader();
@@ -179,19 +191,17 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
             });
         };
 
-        // Process all selected files
         await Promise.all(Array.from(files).map(readFile));
-        
-        // Batch update memory
         const currentImages = memory.userImages || [];
         updateMemory({ userImages: [...currentImages, ...newImages] });
-        
-        // Reset input
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
     const removeImage = (index: number) => {
         const currentImages = memory.userImages || [];
+        if (coverImageIndex === index) setCoverImageIndex(null);
+        if (coverImageIndex !== null && index < coverImageIndex) setCoverImageIndex(coverImageIndex - 1);
+        
         updateMemory({ userImages: currentImages.filter((_, i) => i !== index) });
     };
 
@@ -199,12 +209,10 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
         if (connected) {
             await handleDisconnect();
         } else {
+            setLeftTab('chat'); // Switch to chat tab automatically
             agentRef.current = new HolidayLiveAgent();
-            
-            // Handle Conversation Updates
             agentRef.current.onTranscriptUpdate = (input, output, turnComplete) => {
                 setCurrentTurn(prev => ({ user: prev.user + input, elf: prev.elf + output }));
-                
                 if (turnComplete) {
                     setCurrentTurn(prev => {
                         const newItems: {role: 'user' | 'elf', text: string}[] = [];
@@ -216,7 +224,6 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                 }
             };
 
-            // Handle Voice-Triggered Generation (Optional fallback)
             agentRef.current.onGenerateTrigger = () => {
                 console.log("Trigger received from Agent Tool Call");
                 handleDisconnect(); 
@@ -224,8 +231,15 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
             };
 
             try {
-                // Pass text inputs as initial context
-                const initial = `${contextInput}`;
+                const initial = `
+                    Current Form Data:
+                    - Recipient: ${recipient}
+                    - Sender: ${sender}
+                    - Theme/Context: ${contextInput}
+                    - Message Draft: ${memory.cardMessage || "(Empty)"}
+                    Use this information to guide the conversation.
+                `.trim();
+                
                 await agentRef.current.connect(initial);
                 setConnected(true);
             } catch(e) {
@@ -235,14 +249,14 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
     };
 
     const generateAssets = async () => {
+        if (connected) await handleDisconnect();
+
         setLoading(true);
         setGenerationStatus("Creating magic...");
         try {
-            // Combine history and manual inputs for context
             let context = `Theme/Requirements: ${contextInput}\n`;
             context += history.map(h => `${h.role}: ${h.text}`).join('\n');
             
-            // Fallback if empty
             if (!context.trim() && !contextInput.trim()) {
                  context = "A standard festive holiday card."; 
             }
@@ -254,17 +268,16 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
             updates.cardMessage = textData.text;
             
             setGenerationStatus("Painting the cover...");
-            // Use the first uploaded image as reference if available
-            const firstImage = memory.userImages?.[0];
+            const selectedImage = coverImageIndex !== null ? memory.userImages?.[coverImageIndex] : undefined;
+            
             const imageUrl = await generateHolidayVibeImage(
                 context, 
-                firstImage?.data, 
-                firstImage?.mime
+                selectedImage?.data, 
+                selectedImage?.mime
             );
             updates.generatedCardUrl = imageUrl;
 
             setGenerationStatus("Designing themed stationery...");
-            // 3. Generate Background Texture (for inside pages)
             const bgUrl = await generateHolidayBackground(context);
             updates.generatedBackgroundUrl = bgUrl;
 
@@ -275,7 +288,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
             updates.photoAlbumLink = albumLink;
             
             updateMemory(updates);
-            setActivePage(1); // Auto flip to inside
+            setActivePage(1); 
 
         } catch (e) {
             console.error(e);
@@ -286,29 +299,17 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
         }
     };
 
-    const handleMainAction = async () => {
-        if (connected) {
-            await handleDisconnect();
-        }
-        await generateAssets();
-    };
-
-    // Helper to get button text
-    const getActionButtonText = () => {
-        if (loading) return "Creating Magic...";
-        if (connected) return "Finish & Create Card";
-        if (history.length > 0 || contextInput.trim()) return "Create Card";
-        return "Create Card";
-    };
+    useImperativeHandle(ref, () => ({
+        triggerGeneration: generateAssets
+    }));
 
     const getPagesList = () => {
-        const pages = [0, 1]; // Cover, Letter
-        // Show Photos page if images exist OR if an album link is provided
+        const pages = [0, 1];
         if ((memory.userImages && memory.userImages.length > 0) || memory.photoAlbumLink) {
             pages.push(2); 
         }
-        pages.push(3); // Gift
-        pages.push(4); // Back
+        pages.push(3); 
+        pages.push(4); 
         return pages;
     };
 
@@ -316,12 +317,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
         if (!pdfContainerRef.current) return;
         setGeneratingPdf(true);
         try {
-            const doc = new jsPDF({
-                orientation: 'portrait',
-                unit: 'px',
-                format: [400, 560]
-            });
-
+            const doc = new jsPDF({ orientation: 'portrait', unit: 'px', format: [400, 560] });
             const pages = pdfContainerRef.current.children;
             for (let i = 0; i < pages.length; i++) {
                 const pageElement = pages[i] as HTMLElement;
@@ -332,32 +328,26 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                     backgroundColor: null,
                     logging: false
                 });
-                
                 const imgData = canvas.toDataURL('image/jpeg', 0.95);
-                
                 if (i > 0) doc.addPage();
                 doc.addImage(imgData, 'JPEG', 0, 0, 400, 560);
             }
-
             doc.save(`holiday-card-${recipient}.pdf`);
         } catch (e) {
             console.error("PDF Generation failed:", e);
-            alert("Could not generate PDF. Please try again.");
+            alert("Could not generate PDF.");
         } finally {
             setGeneratingPdf(false);
         }
     };
 
     const renderPageContent = (pageType: number) => {
-        // Shared background style for non-cover pages
         const bgStyle: React.CSSProperties = memory.generatedBackgroundUrl ? {
             backgroundImage: `url(${memory.generatedBackgroundUrl})`,
             backgroundSize: 'cover',
             backgroundPosition: 'center',
-            backgroundColor: '#fffbf0' // fallback
+            backgroundColor: '#fffbf0' 
         } : { backgroundColor: '#fffbf0' };
-
-        // Overlay for readability if using image background
         const overlayClass = memory.generatedBackgroundUrl ? "bg-white/80" : "";
 
         switch(pageType) {
@@ -407,15 +397,13 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                         </div>
                     </div>
                 );
-            case 2: // Photos (New Page)
+            case 2: // Photos
                 return (
                     <div className="w-full h-full text-slate-800 flex flex-col relative" style={bgStyle}>
                          <div className={`w-full h-full p-6 flex flex-col items-center justify-center ${overlayClass}`}>
                              <div className="grid grid-cols-2 gap-4 w-full h-full overflow-hidden content-center">
                                 {memory.userImages?.map((img, i) => {
-                                    // Check aspect ratio if available
                                     const isPortrait = (img.height || 0) > (img.width || 0);
-                                    
                                     return (
                                         <div key={i} className={`bg-white p-2 shadow-lg transform hover:scale-105 transition-transform ${i % 2 === 0 ? 'rotate-1' : '-rotate-1'} self-center justify-self-center`}>
                                             <img 
@@ -426,7 +414,6 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                                         </div>
                                     );
                                 })}
-                                {/* Render QR Code card if album link exists */}
                                 {memory.photoAlbumLink && albumQrUrl && (
                                     <div className="bg-white p-2 shadow-lg transform hover:scale-105 transition-transform -rotate-1 flex flex-col items-center justify-center self-center justify-self-center h-[160px] w-full">
                                         <img src={albumQrUrl} className="w-24 h-24 mb-2" alt="Album QR" />
@@ -489,194 +476,216 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
     const totalPages = getPagesList().length;
 
     return (
-        <div className="bg-slate-800/30 backdrop-blur-md border border-white/10 rounded-2xl p-6 shadow-2xl min-h-[600px] flex flex-col md:flex-row gap-8">
-            {/* Left Panel: Inputs & Chat */}
-            <div className="w-full md:w-1/3 flex flex-col gap-4 max-h-[800px] overflow-y-auto pr-2 custom-scrollbar">
-                <div className="bg-slate-900/50 p-4 rounded-xl border border-white/5">
-                    <h3 className="font-christmas text-2xl text-red-300 mb-4">Card Settings</h3>
-                    
-                    {/* People */}
-                    <div className="mb-4 space-y-3">
-                        <div>
-                            <label className="block text-slate-400 text-xs uppercase font-bold mb-1">Recipient</label>
-                            <input value={recipient} onChange={e => setRecipient(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white focus:border-red-500 outline-none" placeholder="Name" />
-                        </div>
-                        <div className="flex gap-2">
-                            <div className="flex-1">
-                                <label className="block text-slate-400 text-xs uppercase font-bold mb-1">From</label>
-                                <input value={sender} onChange={e => setSender(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white focus:border-red-500 outline-none" placeholder="Your Name" />
-                            </div>
-                            <div className="w-1/3">
-                                <label className="block text-slate-400 text-xs uppercase font-bold mb-1">Date</label>
-                                <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-xs focus:border-red-500 outline-none" />
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Photo Reference / Uploads */}
-                    <div className="mb-4">
-                        <label className="block text-slate-400 text-xs uppercase font-bold mb-1">
-                            Photos (Style Ref & Memories)
-                        </label>
-                        <div className="grid grid-cols-4 gap-2 mb-2">
-                            {memory.userImages?.map((img, idx) => (
-                                <div key={idx} className="relative aspect-square rounded overflow-hidden group border border-slate-600">
-                                    <img src={`data:${img.mime};base64,${img.data}`} className="w-full h-full object-cover" alt="thumbnail" />
-                                    <button 
-                                        onClick={() => removeImage(idx)}
-                                        className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity"
-                                    >
-                                        <span className="material-symbols-outlined text-sm">close</span>
-                                    </button>
-                                </div>
-                            ))}
-                            <button 
-                                onClick={() => fileInputRef.current?.click()}
-                                className="aspect-square bg-slate-700 hover:bg-slate-600 rounded border border-dashed border-slate-500 flex items-center justify-center text-slate-300 transition-colors"
-                            >
-                                <span className="material-symbols-outlined">add</span>
-                            </button>
-                            <input type="file" ref={fileInputRef} className="hidden" accept="image/*" multiple onChange={handleImageUpload} />
-                        </div>
-                        
-                        {/* Google Photos Link Input */}
-                        <div className="mt-2">
-                             <input 
-                                value={albumLink} 
-                                onChange={e => setAlbumLink(e.target.value)} 
-                                className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-xs focus:border-red-500 outline-none" 
-                                placeholder="Google Photos / Album Link" 
-                             />
-                             <p className="text-[10px] text-slate-500 mt-1">
-                                Link generates a QR code for recipients. To print photos on the card, please <span className="text-slate-300 font-bold cursor-pointer hover:underline" onClick={() => fileInputRef.current?.click()}>upload them here</span> (multi-select supported).
-                             </p>
-                        </div>
-                    </div>
-
-                    {/* Context */}
-                    <div className="mb-4">
-                        <label className="block text-slate-400 text-xs uppercase font-bold mb-1">Theme / Context</label>
-                        <textarea 
-                            value={contextInput} 
-                            onChange={e => setContextInput(e.target.value)} 
-                            className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white focus:border-red-500 outline-none text-sm h-20 resize-none" 
-                            placeholder="e.g. A cyberpunk christmas with neon lights..." 
-                        />
-                    </div>
-
-                    {/* Letter Editor */}
-                    <div className="mb-4">
-                        <label className="block text-slate-400 text-xs uppercase font-bold mb-1">Letter Content</label>
-                        <textarea 
-                            value={memory.cardMessage || ""} 
-                            onChange={e => updateMemory({ cardMessage: e.target.value })} 
-                            className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white focus:border-red-500 outline-none text-sm h-24 resize-none" 
-                            placeholder="Generated message will appear here. You can also write your own!" 
-                        />
-                    </div>
-                    
-                    {/* Gift Section */}
-                    <div className="mb-2 pt-4 border-t border-white/5">
-                         <div className="flex items-center gap-2 mb-2">
-                            <input 
-                                type="checkbox" 
-                                id="includeGift" 
-                                checked={includeGift} 
-                                onChange={e => setIncludeGift(e.target.checked)}
-                                className="accent-red-500"
-                            />
-                            <label htmlFor="includeGift" className="text-slate-300 text-sm font-bold cursor-pointer">Include Digital Gift</label>
-                         </div>
-                         
-                         {includeGift && (
-                             <div className="animate-fade-in pl-2 border-l-2 border-slate-700 ml-1">
-                                <div className="flex gap-2 mb-2">
-                                    <button onClick={() => setGiftType('URL')} className={`text-xs px-2 py-1 rounded ${giftType === 'URL' ? 'bg-red-500 text-white' : 'bg-slate-700 text-slate-400'}`}>Web Link</button>
-                                    <button onClick={() => setGiftType('CODE')} className={`text-xs px-2 py-1 rounded ${giftType === 'CODE' ? 'bg-red-500 text-white' : 'bg-slate-700 text-slate-400'}`}>Redeem Code</button>
-                                </div>
-                                
-                                {giftType === 'CODE' && (
-                                    <div className="flex gap-1 mb-2">
-                                        {(['APPLE', 'GOOGLE', 'AMAZON'] as GiftProvider[]).map(p => (
-                                            <button key={p} onClick={() => setGiftProvider(p)} className={`text-[10px] px-2 py-1 rounded border ${giftProvider === p ? 'border-amber-500 text-amber-500' : 'border-slate-700 text-slate-500'}`}>
-                                                {p}
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
-
-                                <div className="relative">
-                                    <input 
-                                        value={giftValue} 
-                                        onChange={e => setGiftValue(e.target.value)} 
-                                        type={showGiftCode ? "text" : "password"}
-                                        placeholder={giftType === 'URL' ? "https://..." : "ABCD-1234-..."} 
-                                        className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white focus:border-red-500 outline-none pr-8 text-sm" 
-                                    />
-                                    <button 
-                                        onClick={() => setShowGiftCode(!showGiftCode)}
-                                        className="absolute right-2 top-2 text-slate-500 hover:text-white"
-                                    >
-                                        <span className="material-symbols-outlined text-sm">{showGiftCode ? 'visibility_off' : 'visibility'}</span>
-                                    </button>
-                                </div>
-                             </div>
-                         )}
-                    </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:h-full min-h-[600px] overflow-hidden">
+            {/* Left Panel: Tabs Container */}
+            <div className="lg:col-span-1 flex flex-col bg-slate-900/40 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden relative">
+                
+                {/* Tab Header */}
+                <div className="flex border-b border-white/5 bg-slate-900/50 shrink-0 z-20">
+                    <button 
+                        onClick={() => setLeftTab('settings')}
+                        className={`flex-1 py-3 text-sm font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${leftTab === 'settings' ? 'bg-slate-800 text-red-400 border-b-2 border-red-500' : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                        <span className="material-symbols-outlined text-lg">tune</span>
+                        Settings
+                    </button>
+                    <button 
+                        onClick={() => setLeftTab('chat')}
+                        className={`flex-1 py-3 text-sm font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${leftTab === 'chat' ? 'bg-slate-800 text-green-400 border-b-2 border-green-500' : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                        <span className="material-symbols-outlined text-lg">graphic_eq</span>
+                        Live Chat
+                        {connected && <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse ml-1"></span>}
+                    </button>
                 </div>
 
-                {/* Chat Panel */}
-                <div className="flex-1 bg-slate-900/50 p-4 rounded-xl border border-white/5 flex flex-col min-h-[300px]">
-                    <div className="flex items-center justify-between mb-2">
-                        <h3 className="font-christmas text-xl text-red-300">Live Elf Chat</h3>
-                        {connected && <span className="flex h-2 w-2 relative"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span><span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span></span>}
-                    </div>
+                {/* Tab Content Wrapper */}
+                <div className="flex-1 relative flex flex-col min-h-0 bg-slate-900/20">
+                    
+                    {/* SETTINGS VIEW - Standard Block Flow, Hidden if not active */}
+                    <div className={`flex-1 overflow-y-auto custom-scrollbar p-4 flex flex-col gap-4 ${leftTab === 'settings' ? 'flex' : 'hidden'}`}>
+                        {/* People */}
+                        <div className="bg-slate-900/50 p-3 rounded-xl border border-white/5 space-y-3">
+                            <div>
+                                <label className="block text-slate-500 text-[10px] uppercase font-bold mb-1">Recipient</label>
+                                <input value={recipient} onChange={e => setRecipient(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white text-sm focus:border-red-500 outline-none transition-colors" placeholder="Name" />
+                            </div>
+                            <div className="flex gap-2">
+                                <div className="flex-1">
+                                    <label className="block text-slate-500 text-[10px] uppercase font-bold mb-1">From</label>
+                                    <input value={sender} onChange={e => setSender(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white text-sm focus:border-red-500 outline-none transition-colors" placeholder="Your Name" />
+                                </div>
+                                <div className="w-1/3">
+                                    <label className="block text-slate-500 text-[10px] uppercase font-bold mb-1">Date</label>
+                                    <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white text-[10px] focus:border-red-500 outline-none transition-colors" />
+                                </div>
+                            </div>
+                        </div>
 
-                    <div className="flex-1 flex flex-col relative">
-                        {/* Chat History */}
-                        <div className="flex-1 bg-black/20 rounded-lg p-3 overflow-y-auto mb-2 text-sm space-y-2 h-40 border border-white/5 scroll-smooth" ref={scrollRef}>
-                            {history.length === 0 && !currentTurn.user && <p className="text-slate-600 italic text-center mt-8 text-xs">
-                                Need inspiration? Chat with the Elf!<br/>
-                                Or fill the context above and create.
-                            </p>}
-                            {history.map((h, i) => (
-                                <p key={i} className={h.role === 'user' ? 'text-slate-300' : 'text-green-300'}>
-                                    <span className="font-bold text-xs opacity-50 block uppercase">{h.role}</span>
-                                    {h.text}
-                                </p>
-                            ))}
-                            {currentTurn.user && <p className="text-slate-300 opacity-60"><span className="font-bold text-xs opacity-50 block uppercase">USER</span>{currentTurn.user}</p>}
-                            {currentTurn.elf && <p className="text-green-300 opacity-60"><span className="font-bold text-xs opacity-50 block uppercase">ELF</span>{currentTurn.elf}</p>}
+                        {/* Photos */}
+                        <div className="bg-slate-900/50 p-3 rounded-xl border border-white/5">
+                            <label className="block text-slate-500 text-[10px] uppercase font-bold mb-2 flex justify-between">
+                                <span>Photos (Select Cover Ref)</span>
+                                <span className="text-[10px]">{memory.userImages?.length || 0}</span>
+                            </label>
+                            <div className="grid grid-cols-4 gap-2 mb-2">
+                                {memory.userImages?.map((img, idx) => (
+                                    <div 
+                                        key={idx} 
+                                        onClick={() => setCoverImageIndex(coverImageIndex === idx ? null : idx)}
+                                        className={`relative aspect-square rounded-lg overflow-hidden group cursor-pointer transition-all border-2 ${coverImageIndex === idx ? 'border-amber-500 ring-2 ring-amber-500/30' : 'border-slate-700 hover:border-slate-500'}`}
+                                    >
+                                        <img src={`data:${img.mime};base64,${img.data}`} className="w-full h-full object-cover" alt="thumbnail" />
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); removeImage(idx); }}
+                                            className="absolute top-0 right-0 p-1 bg-black/60 hover:bg-red-500 text-white opacity-0 group-hover:opacity-100 transition-all rounded-bl"
+                                        >
+                                            <span className="material-symbols-outlined text-[10px]">close</span>
+                                        </button>
+                                        {coverImageIndex === idx && (
+                                            <div className="absolute inset-0 flex items-center justify-center bg-amber-500/20 backdrop-blur-[1px]">
+                                                <span className="material-symbols-outlined text-white drop-shadow-md text-sm">check_circle</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                                <button 
+                                    onClick={() => fileInputRef.current?.click()}
+                                    className="aspect-square bg-slate-800 hover:bg-slate-700 rounded-lg border border-dashed border-slate-600 flex items-center justify-center text-slate-400 transition-all hover:text-white"
+                                >
+                                    <span className="material-symbols-outlined text-lg">add</span>
+                                </button>
+                                <input type="file" ref={fileInputRef} className="hidden" accept="image/*" multiple onChange={handleImageUpload} />
+                            </div>
+                            <input 
+                                value={albumLink} 
+                                onChange={e => setAlbumLink(e.target.value)} 
+                                className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white text-[10px] focus:border-red-500 outline-none" 
+                                placeholder="Google Photos / Album Link" 
+                            />
+                        </div>
+
+                        {/* Context */}
+                        <div className="bg-slate-900/50 p-3 rounded-xl border border-white/5">
+                            <label className="block text-slate-500 text-[10px] uppercase font-bold mb-1">Theme / Context</label>
+                            <textarea 
+                                value={contextInput} 
+                                onChange={e => setContextInput(e.target.value)} 
+                                className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white focus:border-red-500 outline-none text-xs h-20 resize-none leading-relaxed" 
+                                placeholder="e.g. A cyberpunk christmas with neon lights..." 
+                            />
+                        </div>
+
+                        {/* Letter */}
+                        <div className="bg-slate-900/50 p-3 rounded-xl border border-white/5">
+                            <label className="block text-slate-500 text-[10px] uppercase font-bold mb-1">Letter Content</label>
+                            <textarea 
+                                value={memory.cardMessage || ""} 
+                                onChange={e => updateMemory({ cardMessage: e.target.value })} 
+                                className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white focus:border-red-500 outline-none text-xs h-24 resize-none leading-relaxed" 
+                                placeholder="Generated message will appear here..." 
+                            />
                         </div>
                         
-                        {/* Voice Controls Only */}
-                        <div className="flex justify-center mt-2">
-                             <button 
-                                onClick={toggleConnection}
-                                className={`flex items-center gap-2 px-6 py-3 rounded-full font-bold transition-all ${connected ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/30' : 'bg-slate-700 text-slate-300 hover:bg-slate-600 hover:text-white'}`}
-                            >
-                                <span className="material-symbols-outlined">{connected ? 'mic_off' : 'mic'}</span>
-                                {connected ? 'End Chat' : 'Start Voice Chat'}
-                            </button>
+                        {/* Gift */}
+                        <div className="bg-slate-900/50 p-3 rounded-xl border border-white/5">
+                             <div className="flex items-center gap-2 mb-2">
+                                <input 
+                                    type="checkbox" 
+                                    id="includeGift" 
+                                    checked={includeGift} 
+                                    onChange={e => setIncludeGift(e.target.checked)}
+                                    className="accent-red-500"
+                                />
+                                <label htmlFor="includeGift" className="text-slate-300 text-xs font-bold cursor-pointer select-none">Include Gift</label>
+                             </div>
+                             {includeGift && (
+                                 <div className="animate-fade-in space-y-2">
+                                    <div className="flex gap-1">
+                                        <button onClick={() => setGiftType('URL')} className={`flex-1 text-[10px] py-1 rounded ${giftType === 'URL' ? 'bg-red-500 text-white' : 'bg-slate-800 text-slate-400'}`}>Link</button>
+                                        <button onClick={() => setGiftType('CODE')} className={`flex-1 text-[10px] py-1 rounded ${giftType === 'CODE' ? 'bg-red-500 text-white' : 'bg-slate-800 text-slate-400'}`}>Code</button>
+                                    </div>
+                                    <div className="relative">
+                                        <input 
+                                            value={giftValue} 
+                                            onChange={e => setGiftValue(e.target.value)} 
+                                            type={showGiftCode ? "text" : "password"}
+                                            placeholder={giftType === 'URL' ? "https://..." : "ABCD-1234"} 
+                                            className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white focus:border-red-500 outline-none pr-8 text-xs" 
+                                        />
+                                        <button 
+                                            onClick={() => setShowGiftCode(!showGiftCode)}
+                                            className="absolute right-2 top-2 text-slate-500 hover:text-white"
+                                        >
+                                            <span className="material-symbols-outlined text-sm">{showGiftCode ? 'visibility_off' : 'visibility'}</span>
+                                        </button>
+                                    </div>
+                                 </div>
+                             )}
                         </div>
                     </div>
 
-                    <button 
-                        onClick={handleMainAction}
-                        disabled={loading}
-                        className={`w-full mt-4 py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all ${loading ? 'bg-slate-700 cursor-wait' : 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-black shadow-lg shadow-amber-900/30'}`}
-                    >
-                        <span className={`material-symbols-outlined ${loading ? 'animate-spin' : ''}`}>
-                            {loading ? 'refresh' : (connected ? 'check_circle' : 'auto_fix_high')}
-                        </span>
-                        {getActionButtonText()}
-                    </button>
+                    {/* CHAT VIEW - Standard Block Flow, Hidden if not active */}
+                    <div className={`flex-1 flex flex-col min-h-0 ${leftTab === 'chat' ? 'flex' : 'hidden'}`}>
+                        <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar" ref={scrollRef}>
+                            {history.length === 0 && !currentTurn.user && (
+                                <div className="text-center mt-12 space-y-4 opacity-50">
+                                    <span className="material-symbols-outlined text-6xl text-slate-600">mic</span>
+                                    <p className="text-slate-400 text-xs px-6">
+                                        Tap the mic below to brainstorm ideas with our AI Elf.
+                                    </p>
+                                </div>
+                            )}
+                            {history.map((h, i) => (
+                                <div key={i} className={`flex flex-col ${h.role === 'user' ? 'items-end' : 'items-start'}`}>
+                                    <div className={`max-w-[85%] rounded-2xl p-3 text-sm ${h.role === 'user' ? 'bg-slate-700 text-slate-200 rounded-br-sm' : 'bg-green-900/30 border border-green-500/20 text-green-100 rounded-bl-sm'}`}>
+                                        {h.text}
+                                    </div>
+                                    <span className="text-[9px] text-slate-500 mt-1 uppercase font-bold">{h.role}</span>
+                                </div>
+                            ))}
+                            {currentTurn.user && (
+                                 <div className="flex flex-col items-end opacity-70">
+                                    <div className="max-w-[85%] rounded-2xl p-3 text-sm bg-slate-700 text-slate-200 rounded-br-sm border border-slate-500/50">
+                                        {currentTurn.user}
+                                    </div>
+                                 </div>
+                            )}
+                            {currentTurn.elf && (
+                                 <div className="flex flex-col items-start opacity-70">
+                                    <div className="max-w-[85%] rounded-2xl p-3 text-sm bg-green-900/30 text-green-100 rounded-bl-sm border border-green-500/20">
+                                        {currentTurn.elf}
+                                    </div>
+                                 </div>
+                            )}
+                         </div>
+
+                         <div className="p-4 bg-slate-900/80 border-t border-white/5 flex justify-center shrink-0">
+                             <button 
+                                onClick={toggleConnection}
+                                className={`w-16 h-16 rounded-full flex items-center justify-center transition-all duration-300 ${connected ? 'bg-red-500 hover:bg-red-600 shadow-[0_0_30px_rgba(239,68,68,0.4)] scale-110' : 'bg-slate-700 hover:bg-slate-600'}`}
+                            >
+                                <span className="material-symbols-outlined text-3xl text-white">
+                                    {connected ? 'mic_off' : 'mic'}
+                                </span>
+                            </button>
+                         </div>
+                    </div>
+
+                    {/* Loading Overlay for Left Panel */}
+                    {loading && (
+                         <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-center text-center p-6">
+                             <div className="w-16 h-16 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                             <h3 className="font-christmas text-2xl text-amber-300 mb-2">{generationStatus}</h3>
+                             <p className="text-xs text-slate-400">The elves are working hard!</p>
+                         </div>
+                    )}
                 </div>
             </div>
 
-            {/* Right Panel: Preview */}
-            <div className="w-full md:w-2/3 flex flex-col items-center justify-center bg-black/20 rounded-2xl border border-white/5 p-4 relative">
-                <div className="relative w-[400px] h-[560px] shadow-2xl transition-all duration-500 transform perspective-1000">
+            {/* Right Panel: Card Preview */}
+            <div className="lg:col-span-1 flex flex-col items-center justify-center relative bg-black/20 rounded-2xl border border-white/5">
+                 <div className="relative w-full max-w-[400px] aspect-[400/560] shadow-2xl transition-all duration-500">
                     <div className="w-full h-full bg-white rounded-r-lg rounded-l-sm overflow-hidden relative shadow-lg">
                         <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-black/20 to-transparent z-20 pointer-events-none"></div>
                         {renderPageContent(activePageType)}
@@ -684,36 +693,32 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                 </div>
 
                 {/* Pagination */}
-                <div className="mt-8 flex gap-4 bg-slate-900/80 p-2 rounded-full border border-white/10 backdrop-blur items-center">
-                    <button onClick={() => setActivePage(Math.max(0, activePage - 1))} className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-white/10 transition-colors">
-                        <span className="material-symbols-outlined">chevron_left</span>
+                <div className="mt-6 flex gap-4 bg-slate-900/60 p-2 rounded-full border border-white/10 backdrop-blur items-center z-10">
+                    <button onClick={() => setActivePage(Math.max(0, activePage - 1))} className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-white/10 transition-colors">
+                        <span className="material-symbols-outlined text-lg">chevron_left</span>
                     </button>
                     <div className="flex items-center gap-2 px-2">
                         {getPagesList().map((_, i) => (
-                             <div key={i} onClick={() => setActivePage(i)} className={`w-2.5 h-2.5 rounded-full cursor-pointer transition-all ${activePage === i ? 'bg-red-500 scale-125' : 'bg-slate-600 hover:bg-slate-500'}`} />
+                             <div key={i} onClick={() => setActivePage(i)} className={`w-2 h-2 rounded-full cursor-pointer transition-all ${activePage === i ? 'bg-red-500 scale-125' : 'bg-slate-600 hover:bg-slate-500'}`} />
                         ))}
                     </div>
-                    <button onClick={() => setActivePage(Math.min(totalPages - 1, activePage + 1))} className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-white/10 transition-colors">
-                        <span className="material-symbols-outlined">chevron_right</span>
+                    <button onClick={() => setActivePage(Math.min(totalPages - 1, activePage + 1))} className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-white/10 transition-colors">
+                        <span className="material-symbols-outlined text-lg">chevron_right</span>
                     </button>
                 </div>
                 
-                <div className="flex justify-between w-full max-w-[400px] mt-4 items-center">
-                    <p className="text-xs text-slate-500 uppercase tracking-widest">
-                        {['Cover Page', 'Letter', 'Photos', 'Gift', 'Back'].filter((_, i) => {
-                            // Simple mapping based on known indices in renderPageContent
-                            if (i === 2 && (!memory.userImages || memory.userImages.length === 0) && !memory.photoAlbumLink) return false; 
-                            return true;
-                        })[activePage] || 'Page'}
+                <div className="flex justify-between w-full max-w-[400px] mt-4 items-center px-2">
+                    <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
+                        {['Cover Page', 'Letter', 'Photos', 'Gift', 'Back'][activePage] || 'Page'}
                     </p>
                     {memory.generatedCardUrl && (
                         <button 
                             onClick={downloadPDF}
                             disabled={generatingPdf}
-                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${generatingPdf ? 'bg-slate-700 text-slate-500' : 'bg-green-600 hover:bg-green-500 text-white shadow-lg'}`}
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-bold transition-all ${generatingPdf ? 'bg-slate-800 text-slate-500' : 'bg-green-600 hover:bg-green-500 text-white shadow-lg'}`}
                         >
-                            <span className="material-symbols-outlined">{generatingPdf ? 'hourglass_empty' : 'download'}</span>
-                            {generatingPdf ? 'PDF...' : 'Download PDF'}
+                            <span className="material-symbols-outlined text-sm">{generatingPdf ? 'hourglass_empty' : 'download'}</span>
+                            {generatingPdf ? 'PDF...' : 'Download'}
                         </button>
                     )}
                 </div>
@@ -731,6 +736,6 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
             </div>
         </div>
     );
-};
+});
 
 export default CardWorkshop;

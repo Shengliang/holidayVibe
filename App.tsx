@@ -1,7 +1,7 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AgentMemory } from './types';
-import CardWorkshop from './features/CardWorkshop';
+import CardWorkshop, { WorkshopHandle } from './features/CardWorkshop';
 import AboutPage from './features/AboutPage';
 
 // Simple Snowfall Effect Component
@@ -33,6 +33,9 @@ const Snowfall = () => {
 
 const App: React.FC = () => {
   const [view, setView] = useState<'workshop' | 'about'>('workshop');
+  const [workshopStatus, setWorkshopStatus] = useState({ loading: false, connected: false });
+  const workshopRef = useRef<WorkshopHandle>(null);
+
   const [memory, setMemory] = useState<AgentMemory>({
     recipientName: "My Network",
     senderName: "Sheng-Liang Song",
@@ -46,63 +49,80 @@ const App: React.FC = () => {
     setMemory(prev => ({ ...prev, ...updates }));
   };
 
+  const getActionButtonText = () => {
+      if (workshopStatus.loading) return "Creating Magic...";
+      if (workshopStatus.connected) return "Finish & Create Card";
+      return "Create Card";
+  };
+
   return (
-    <div className="min-h-screen text-slate-100 relative selection:bg-red-500 selection:text-white">
+    <div className="min-h-screen text-slate-100 relative selection:bg-red-500 selection:text-white flex flex-col overflow-hidden">
       <Snowfall />
-      <div className="relative z-10 container mx-auto px-4 py-8 max-w-6xl">
-         <header className="flex justify-between items-center mb-8 border-b border-white/10 pb-4">
+      <div className="relative z-10 container mx-auto px-4 py-4 max-w-[1600px] flex-1 flex flex-col h-screen">
+         <header className="flex justify-between items-center mb-4 border-b border-white/10 pb-4 shrink-0">
            <div className="flex items-center gap-3 cursor-pointer" onClick={() => setView('workshop')}>
                <span className="material-symbols-outlined text-4xl text-red-500">fireplace</span>
                <div>
-                   <h1 className="text-3xl font-christmas text-red-100 drop-shadow-lg">
+                   <h1 className="text-2xl font-christmas text-red-100 drop-shadow-lg leading-none">
                      Holiday Card Factory
                    </h1>
-                   <p className="text-xs text-slate-400">Powered by Gemini 2.5 Live & Flash</p>
+                   <p className="text-[10px] text-slate-400">Powered by Gemini 2.5</p>
                </div>
            </div>
            
-           {view === 'workshop' && (
-             <button 
-                onClick={() => setView('about')}
-                className="flex items-center gap-2 px-4 py-2 rounded-full bg-slate-800/50 hover:bg-slate-700 border border-white/10 transition-all text-sm text-slate-300 hover:text-white"
-             >
-                <span className="material-symbols-outlined text-lg">info</span>
-                <span className="hidden sm:inline">About Project</span>
-             </button>
-           )}
+           <div className="flex items-center gap-3">
+             {view === 'workshop' && (
+               <button 
+                  onClick={() => workshopRef.current?.triggerGeneration()}
+                  disabled={workshopStatus.loading}
+                  className={`flex items-center gap-2 px-6 py-2 rounded-full font-bold transition-all text-sm shadow-lg ${
+                    workshopStatus.loading 
+                      ? 'bg-slate-700 text-slate-400 cursor-wait' 
+                      : 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-black shadow-amber-900/30'
+                  }`}
+               >
+                  <span className={`material-symbols-outlined text-lg ${workshopStatus.loading ? 'animate-spin' : ''}`}>
+                      {workshopStatus.loading ? 'refresh' : 'auto_fix_high'}
+                  </span>
+                  {getActionButtonText()}
+               </button>
+             )}
+
+             {view === 'workshop' && (
+               <button 
+                  onClick={() => setView('about')}
+                  className="flex items-center gap-2 px-4 py-2 rounded-full bg-slate-800/50 hover:bg-slate-700 border border-white/10 transition-all text-sm text-slate-300 hover:text-white"
+               >
+                  <span className="material-symbols-outlined text-lg">info</span>
+                  <span className="hidden sm:inline">About</span>
+               </button>
+             )}
+           </div>
          </header>
          
-         <main className="min-h-[600px] transition-all duration-300">
+         <main className="flex-1 min-h-0">
            {view === 'workshop' ? (
-             <CardWorkshop memory={memory} updateMemory={updateMemory} />
+             <CardWorkshop 
+                ref={workshopRef}
+                memory={memory} 
+                updateMemory={updateMemory} 
+                onStatusChange={setWorkshopStatus}
+             />
            ) : (
              <AboutPage onBack={() => setView('workshop')} />
            )}
          </main>
          
-         <footer className="mt-12 text-center text-slate-500 text-xs flex flex-col items-center gap-3">
-            <p>Gemini API Demo | Holiday 2025</p>
-            <div className="flex items-center gap-6">
-                <a 
-                  href="https://github.com/Shengliang/holidayVibe" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 hover:text-white transition-colors"
-                >
-                    <span className="material-symbols-outlined text-sm">code</span>
-                    Source Code
-                </a>
-                <a 
-                  href="https://holiday-vibe-pipeline-600965458720.us-west1.run.app/" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 hover:text-white transition-colors"
-                >
-                    <span className="material-symbols-outlined text-sm">rocket_launch</span>
-                    Live Demo
-                </a>
-            </div>
-         </footer>
+         {view === 'about' && (
+             <footer className="mt-4 text-center text-slate-500 text-xs flex flex-col items-center gap-3 pb-4">
+                <p>Gemini API Demo | Holiday 2025</p>
+                <div className="flex items-center gap-6">
+                    <a href="https://github.com/Shengliang/holidayVibe" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 hover:text-white">
+                        <span className="material-symbols-outlined text-sm">code</span> Source Code
+                    </a>
+                </div>
+             </footer>
+         )}
       </div>
     </div>
   );
