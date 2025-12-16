@@ -626,9 +626,9 @@ const CardWorkshop = forwardRef<WorkshopHandle, Props>(({ memory, updateMemory, 
     const totalPages = getPagesList().length;
 
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:h-full min-h-[600px] overflow-hidden">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:h-full lg:overflow-hidden pb-12">
             {/* Left Panel: Tabs Container */}
-            <div className="lg:col-span-1 flex flex-col bg-slate-900/40 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden relative">
+            <div className="lg:col-span-1 flex flex-col bg-slate-900/40 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden relative h-[500px] lg:h-auto">
                 
                 {/* Tab Header */}
                 <div className="flex border-b border-white/5 bg-slate-900/50 shrink-0 z-20">

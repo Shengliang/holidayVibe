@@ -59,9 +59,9 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen text-slate-100 relative selection:bg-red-500 selection:text-white flex flex-col overflow-hidden">
+    <div className="min-h-screen text-slate-100 relative selection:bg-red-500 selection:text-white flex flex-col lg:overflow-hidden overflow-y-auto">
       <Snowfall />
-      <div className="relative z-10 container mx-auto px-4 py-4 max-w-[1600px] flex-1 flex flex-col h-screen">
+      <div className="relative z-10 container mx-auto px-4 py-4 max-w-[1600px] flex-1 flex flex-col lg:h-screen min-h-screen">
          <header className="flex justify-between items-center mb-4 border-b border-white/10 pb-4 shrink-0">
            <div className="flex items-center gap-3 cursor-pointer" onClick={() => setView('workshop')}>
                <span className="material-symbols-outlined text-4xl text-red-500">fireplace</span>
