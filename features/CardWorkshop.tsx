@@ -35,6 +35,10 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
     const [giftValue, setGiftValue] = useState(memory.giftUrl || '');
     const [chatInput, setChatInput] = useState("");
     
+    // Album State
+    const [albumLink, setAlbumLink] = useState(memory.photoAlbumLink || '');
+    const [albumQrUrl, setAlbumQrUrl] = useState<string | null>(null);
+    
     // Upload State
     const fileInputRef = useRef<HTMLInputElement>(null);
     
@@ -68,7 +72,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
         }
     }, [history, currentTurn]);
 
-    // Smart QR Logic
+    // Smart QR Logic (Gift)
     const getQrData = () => {
         if (!giftValue) return 'https://google.com';
         
@@ -87,7 +91,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
         }
     };
 
-    // Pre-fetch QR Code as Data URL
+    // Pre-fetch QR Code for Gift
     useEffect(() => {
         let active = true;
         const fetchQr = async () => {
@@ -111,6 +115,31 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
         fetchQr();
         return () => { active = false; };
     }, [giftValue, giftType, giftProvider, includeGift]);
+
+    // Pre-fetch QR Code for Album Link
+    useEffect(() => {
+        let active = true;
+        const fetchAlbumQr = async () => {
+            if (!albumLink) {
+                setAlbumQrUrl(null);
+                return;
+            }
+            const url = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(albumLink)}&color=000-000-000&bgcolor=255-255-255&format=png`;
+            try {
+                const response = await fetch(url);
+                const blob = await response.blob();
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    if (active) setAlbumQrUrl(reader.result as string);
+                };
+                reader.readAsDataURL(blob);
+            } catch (e) {
+                console.error("Failed to load Album QR", e);
+            }
+        };
+        fetchAlbumQr();
+        return () => { active = false; };
+    }, [albumLink]);
 
     const handleDisconnect = async () => {
         if (agentRef.current) await agentRef.current.disconnect();
@@ -238,6 +267,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
             updates.senderName = sender;
             updates.date = date;
             updates.giftUrl = includeGift ? giftValue : null;
+            updates.photoAlbumLink = albumLink;
             
             updateMemory(updates);
             setActivePage(1); // Auto flip to inside
@@ -268,7 +298,10 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
 
     const getPagesList = () => {
         const pages = [0, 1]; // Cover, Letter
-        if (memory.userImages && memory.userImages.length > 0) pages.push(2); // Photos
+        // Show Photos page if images exist OR if an album link is provided
+        if ((memory.userImages && memory.userImages.length > 0) || memory.photoAlbumLink) {
+            pages.push(2); 
+        }
         pages.push(3); // Gift
         pages.push(4); // Back
         return pages;
@@ -371,6 +404,13 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                                         <img src={`data:${img.mime};base64,${img.data}`} className="w-full h-32 object-cover" alt="Memory" />
                                     </div>
                                 ))}
+                                {/* Render QR Code card if album link exists */}
+                                {memory.photoAlbumLink && albumQrUrl && (
+                                    <div className="bg-white p-2 shadow-lg transform hover:scale-105 transition-transform -rotate-1 flex flex-col items-center justify-center">
+                                        <img src={albumQrUrl} className="w-24 h-24 mb-2" alt="Album QR" />
+                                        <p className="text-[10px] text-center font-bold text-slate-600 uppercase leading-tight">Shared<br/>Photo Album</p>
+                                    </div>
+                                )}
                              </div>
                              <p className="font-christmas text-xl text-red-700 mt-4">Holiday Memories</p>
                          </div>
@@ -476,7 +516,17 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                             </button>
                             <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleImageUpload} />
                         </div>
-                        <p className="text-[10px] text-slate-500">First photo used for AI Style Generation.</p>
+                        
+                        {/* Google Photos Link Input */}
+                        <div className="mt-2">
+                             <input 
+                                value={albumLink} 
+                                onChange={e => setAlbumLink(e.target.value)} 
+                                className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-xs focus:border-red-500 outline-none" 
+                                placeholder="Google Photos / Album Link" 
+                             />
+                             <p className="text-[10px] text-slate-500 mt-1">First photo used for AI Style. Link adds a QR code to Photos page.</p>
+                        </div>
                     </div>
 
                     {/* Context */}
@@ -646,7 +696,7 @@ const CardWorkshop: React.FC<Props> = ({ memory, updateMemory }) => {
                     <p className="text-xs text-slate-500 uppercase tracking-widest">
                         {['Cover Page', 'Letter', 'Photos', 'Gift', 'Back'].filter((_, i) => {
                             // Simple mapping based on known indices in renderPageContent
-                            if (i === 2 && (!memory.userImages || memory.userImages.length === 0)) return false; 
+                            if (i === 2 && (!memory.userImages || memory.userImages.length === 0) && !memory.photoAlbumLink) return false; 
                             return true;
                         })[activePage] || 'Page'}
                     </p>
